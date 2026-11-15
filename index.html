@@ -126,6 +126,28 @@
   .big-usdt { font-size:30px; font-weight:800; color:var(--cyan); margin-top:6px; }
   .cx { position:absolute; top:10px; right:16px; font-size:18px; opacity:.7; cursor:pointer; z-index:2; }
   .cbody { max-height:62vh; overflow-y:auto; }
+  /* ---- слоты ---- */
+  .slpick { display:flex; gap:6px; margin-top:6px; }
+  .slchip { flex:1; text-align:center; padding:8px 2px 6px; border:2px solid #ffffff33; border-radius:12px; font-size:12px; line-height:1.25; cursor:pointer; user-select:none; }
+  .slchip span { display:block; font-size:26px; line-height:1.2; }
+  .slchip small { display:block; opacity:.6; font-size:11px; margin-top:1px; }
+  .slchip.on { border-color:var(--pink); background:#ff2fa022; }
+  .machine { --cs:76px; display:flex; justify-content:center; gap:6px; margin:14px auto 4px; padding:10px; width:max-content; max-width:100%;
+             border-radius:18px; background:linear-gradient(160deg,#3a1f7a,#160c38); border:3px solid #ffd76a;
+             box-shadow:0 0 24px #ffd76a55, inset 0 0 18px #000a; }
+  .reel { width:var(--cs); overflow:hidden; border-radius:10px; background:linear-gradient(#0d0820,#2a1858 50%,#0d0820); }
+  .rs { display:flex; flex-direction:column; will-change:transform; }
+  .reel.blur .rs { filter:blur(1.5px); }
+  .sy { flex:0 0 var(--cs); height:var(--cs); display:flex; align-items:center; justify-content:center; font-size:calc(var(--cs)*.58); line-height:1; border-radius:10px; }
+  .sy.hit { animation:slhit .45s ease-in-out infinite alternate; position:relative; z-index:1; }
+  @keyframes slhit { from { transform:scale(1); background:#ffd76a22; } to { transform:scale(1.14); background:#ffd76a55; box-shadow:0 0 14px #ffd76a; } }
+  .slwin { text-align:center; font-weight:800; min-height:28px; margin-top:8px; font-size:18px; }
+  .slwin.big { color:#ffd76a; text-shadow:0 0 14px #ffd76a; animation:bob 1s ease-in-out infinite; }
+  .btnrow button.turbo { border-color:#ffd76a; background:#2a2412; }
+  .btnrow button.turbo.on { background:linear-gradient(90deg,#b8860b,#ffd76a); color:#111; box-shadow:0 0 14px #ffd76a88; }
+  .paytab { margin-top:12px; font-size:13px; }
+  .paytab summary { cursor:pointer; opacity:.85; padding:4px 0; }
+  .paytab .logrow span:first-child { white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -144,7 +166,7 @@
 </div>
 
 <div id="p2" class="page">
-  <div class="nav sub g" style="margin-top:8px"><div id="sw1" class="on">🥟 Пельмень/Тапок</div><div id="sw2">🃏 Блэкджек</div><div id="sw3">❌⭕ Крестики-нолики</div><div id="sw4">🥤 Наперстки</div></div>
+  <div class="nav sub g" style="margin-top:8px"><div id="sw1" class="on">🥟 Пельмень/Тапок</div><div id="sw2">🃏 Блэкджек</div><div id="sw3">❌⭕ Крестики-нолики</div><div id="sw4">🥤 Наперстки</div><div id="sw5">🎰 Слоты</div></div>
 
   <div class="card" id="gc1">
     <h2>🥟 Пельмень или 🩴 Тапок</h2>
@@ -197,6 +219,22 @@
     <div class="quick" data-for="shbet"><span data-q="10">10</span><span data-q="100">100</span><span data-q="half">½</span><span data-q="all">Все</span></div>
     <div class="msg" id="shmsg"></div>
     <div style="opacity:.6;font-size:13px;text-align:center">Угадал — выплата x2.7 от ставки (шанс 1 из 3). Не угадал — ставка сгорает.</div>
+  </div>
+
+  <div class="card" id="gc5" style="display:none">
+    <h2>🎰 Слоты</h2>
+    <div class="slpick" id="sl_pick"></div>
+    <div class="machine" id="machine"></div>
+    <div class="slwin" id="sl_win"></div>
+    <input id="slbet" type="number" inputmode="numeric" min="1" placeholder="Ставка" value="10">
+    <div class="quick" data-for="slbet"><span data-q="10">10</span><span data-q="100">100</span><span data-q="half">½</span><span data-q="all">Все</span></div>
+    <div class="btnrow">
+      <button id="sl_spin">🎰 Крутить</button>
+      <button id="sl_turbo" class="turbo">⚡ Турбо</button>
+    </div>
+    <div class="msg" id="slmsg"></div>
+    <div style="opacity:.6;font-size:13px;text-align:center" id="sl_info"></div>
+    <details class="paytab"><summary>📋 Таблица выплат</summary><div id="sl_pay"></div></details>
   </div>
 </div>
 
@@ -463,10 +501,11 @@ $("flip").onclick = async () => {
 
 // ---------- переключатель игр ----------
 function showGame(n) {
-  [1,2,3,4].forEach(i => { $("gc"+i).style.display = i===n ? "block" : "none"; $("sw"+i).classList.toggle("on", i===n); });
+  [1,2,3,4,5].forEach(i => { $("gc"+i).style.display = i===n ? "block" : "none"; $("sw"+i).classList.toggle("on", i===n); });
   if (n===3) tttLoad();
+  if (n===5) slLoad();
 }
-[1,2,3,4].forEach(i => $("sw"+i).onclick = () => showGame(i));
+[1,2,3,4,5].forEach(i => $("sw"+i).onclick = () => showGame(i));
 
 // ---------- Блэкджек ----------
 function cardEl(c) {
@@ -687,6 +726,112 @@ slots.forEach((s, i) => s.onclick = async () => {
     shellBusy = false;
   }, 1100);
 });
+
+// ---------- Слоты ----------
+let SL = null, slKey = "fruit", slBusy = false, slCS = 70, slReels = [];
+const slTurbo = {};                                   // режим «Турбо» запоминается отдельно для каждого слота
+try { Object.assign(slTurbo, JSON.parse(localStorage.getItem("slTurbo") || "{}")); } catch (e) {}
+const rnd = a => a[Math.floor(Math.random() * a.length)];
+const mkSym = s => { const d = document.createElement("div"); d.className = "sy"; d.textContent = s; return d; };
+
+async function slLoad() {
+  if (SL) return;
+  const { status, data } = await post("/api/slot/config");
+  if (status !== 200) { $("slmsg").textContent = "Не удалось загрузить слоты, попробуйте позже"; return; }
+  SL = data.slots;
+  Object.keys(SL).forEach(k => {
+    const c = SL[k], d = document.createElement("div"); d.className = "slchip"; d.dataset.k = k;
+    const e = document.createElement("span"); e.textContent = c.emoji;
+    const t = document.createElement("div"); t.textContent = c.name;
+    const s = document.createElement("small"); s.textContent = `${c.reels}×${c.rows} · ${c.lines} ${c.lines === 1 ? "линия" : c.lines < 5 ? "линии" : "линий"}`;
+    d.append(e, t, s); d.onclick = () => slSelect(k); $("sl_pick").appendChild(d);
+  });
+  slSelect(slKey);
+}
+
+function slSelect(k) {
+  if (slBusy || !SL) return;
+  slKey = k; const c = SL[k];
+  document.querySelectorAll(".slchip").forEach(x => x.classList.toggle("on", x.dataset.k === k));
+  // размер ячейки подгоняем под ширину экрана
+  const inner = Math.min(360, window.innerWidth - 32) - 32 - 26 - (c.reels - 1) * 6;
+  slCS = Math.max(34, Math.min(c.rows === 1 ? 96 : c.reels <= 3 ? 78 : 64, Math.floor(inner / c.reels)));
+  const m = $("machine"); m.style.setProperty("--cs", slCS + "px"); m.innerHTML = ""; slReels = [];
+  for (let r = 0; r < c.reels; r++) {
+    const reel = document.createElement("div"); reel.className = "reel"; reel.style.height = `calc(var(--cs) * ${c.rows})`;
+    const rs = document.createElement("div"); rs.className = "rs";
+    for (let i = 0; i < c.rows; i++) rs.appendChild(mkSym(rnd(c.symbols)));
+    reel.appendChild(rs); m.appendChild(reel); slReels.push(reel);
+  }
+  $("sl_win").textContent = ""; $("sl_win").className = "slwin"; $("slmsg").textContent = "";
+  $("sl_info").textContent = c.info + (c.lines === 1 ? ` Минимальная ставка: ${c.min_bet} 🪙.` : ` Ставка делится на ${c.lines} линий, минимум ${c.min_bet} 🪙.`);
+  slTurboUI();
+  const pt = $("sl_pay"); pt.innerHTML = "";
+  c.symbols.forEach(sym => {
+    const row = document.createElement("div"); row.className = "logrow";
+    const a = document.createElement("span"); a.textContent = sym + (sym === c.wild ? " (дикий)" : "");
+    const b = document.createElement("span");
+    b.textContent = Object.keys(c.pay[sym]).map(Number).sort((x, y) => x - y).map(n => `${n} шт — x${c.pay[sym][n]}`).join(" · ");
+    row.append(a, b); pt.appendChild(row);
+  });
+  const note = document.createElement("div"); note.style.cssText = "opacity:.6;margin-top:6px";
+  note.textContent = "x — множитель ставки на одну линию.";
+  pt.appendChild(note);
+}
+
+function slTurboUI() { $("sl_turbo").classList.toggle("on", !!slTurbo[slKey]); $("sl_turbo").textContent = slTurbo[slKey] ? "⚡ Турбо: ВКЛ" : "⚡ Турбо"; }
+$("sl_turbo").onclick = () => {
+  if (slBusy) return;
+  slTurbo[slKey] = !slTurbo[slKey]; slTurboUI();
+  try { localStorage.setItem("slTurbo", JSON.stringify(slTurbo)); } catch (e) {}
+};
+
+function slAnimate(c, grid, turbo) {
+  return Promise.all(slReels.map((reel, ci) => new Promise(done => {
+    const rs = reel.firstChild, cur = [...rs.children].map(x => x.textContent);
+    const n = turbo ? 5 : 14 + ci * 6;                              // сколько символов «пролетит» мимо
+    const col = [...cur, ...Array.from({ length: n }, () => rnd(c.symbols)), ...grid.map(r => r[ci])];
+    rs.style.transition = "none"; rs.style.transform = "translateY(0)";
+    rs.replaceChildren(...col.map(mkSym)); reel.classList.add("blur");
+    void rs.offsetHeight;
+    const dur = turbo ? 0.3 + ci * 0.07 : 1.0 + ci * 0.3;
+    rs.style.transition = `transform ${dur}s cubic-bezier(.22,.8,.25,1)`;
+    rs.style.transform = `translateY(${-(c.rows + n) * slCS}px)`;
+    setTimeout(() => {
+      rs.style.transition = "none"; rs.replaceChildren(...grid.map(r => mkSym(r[ci]))); rs.style.transform = "translateY(0)";
+      reel.classList.remove("blur"); done();
+    }, dur * 1000 + 40);
+  })));
+}
+
+$("sl_spin").onclick = async () => {
+  if (slBusy || !SL) return;
+  const c = SL[slKey], key = slKey, bet = parseInt($("slbet").value, 10), msg = $("slmsg"), win = $("sl_win");
+  if (!bet || bet < c.min_bet) { msg.textContent = `Минимальная ставка в этом слоте: ${c.min_bet} 🪙`; return; }
+  if (bet > (window._bal || 0)) { msg.textContent = "Недостаточно монет 🪙"; return; }
+  slBusy = true; $("sl_spin").disabled = true; msg.textContent = ""; win.textContent = ""; win.className = "slwin";
+  slReels.forEach(r => [...r.firstChild.children].forEach(x => x.classList.remove("hit")));
+  const { status, data } = await post("/api/slot/spin", { slot: key, bet });
+  if (status !== 200) {
+    msg.textContent = data.error === "banned" ? "Вам закрыт доступ к играм 🚫" : data.error === "no_money" ? "Недостаточно монет 🪙"
+                    : data.error === "bad_bet" ? `Некорректная ставка (минимум ${c.min_bet} 🪙)` : "Ошибка, попробуйте позже";
+    if (data.balance !== undefined) setBal(data.balance);
+    slBusy = false; $("sl_spin").disabled = false; return;
+  }
+  await slAnimate(c, data.grid, !!slTurbo[key]);
+  setBal(data.balance);
+  data.wins.forEach(w => w.cells.forEach(([r, ci]) => slReels[ci].firstChild.children[r].classList.add("hit")));
+  if (data.payout > 0) {
+    const x = Math.round(data.payout / bet * 10) / 10, big = data.payout >= bet * 20;
+    win.textContent = `${big ? "🔥 БОЛЬШОЙ ВЫИГРЫШ! " : "🎉 "}+${data.payout} 🪙 (x${x})`;
+    if (big) win.classList.add("big");
+    msg.textContent = data.payout > bet ? `Чистыми: +${data.payout - bet} 🪙` : `Вернулось ${data.payout} из ${bet} 🪙`;
+  } else {
+    win.textContent = `−${bet} 🪙`; msg.textContent = pick(["Не повезло, крутим ещё? 😏", "Почти! 🎲", "Барабаны сегодня капризничают 🥱"]);
+  }
+  tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(data.payout > bet ? "success" : data.payout ? "warning" : "error");
+  slBusy = false; $("sl_spin").disabled = false;
+};
 
 // ---------- Пополнение ----------
 let depId = null;

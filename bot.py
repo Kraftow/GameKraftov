@@ -787,6 +787,124 @@ async def shell(req: Request):
     return {"ball": ball, "won": won, "payout": payout, "balance": bal}
 
 
+# ---------- Слоты ----------
+def _strip(counts: dict, seed: int) -> list:
+    """Лента барабана: символы в фиксированном (перемешанном) порядке."""
+    s = [k for k, n in counts.items() for _ in range(n)]
+    random.Random(seed).shuffle(s)
+    return s
+
+
+# pay[символ] = {сколько_подряд_слева: выплата в «ставках на линию»}
+# Общая ставка делится поровну между линиями: выплата = ставка * сумма_выплат / число_линий
+SLOTS = {
+    # 1) классика 3 барабана × 3 ряда, 5 линий (3 горизонтали + 2 диагонали)
+    "fruit": {
+        "name": "Фруктовый", "emoji": "🍒", "reels": 3, "rows": 3,
+        "lines": [[0, 0, 0], [1, 1, 1], [2, 2, 2], [0, 1, 2], [2, 1, 0]],
+        "strip": _strip({"🍒": 7, "🍋": 6, "🍉": 4, "🔔": 3, "⭐": 2, "7️⃣": 1}, 11),
+        "wild": None,
+        "pay": {"🍒": {3: 11}, "🍋": {3: 15}, "🍉": {3: 25}, "🔔": {3: 48}, "⭐": {3: 115}, "7️⃣": {3: 375}},
+        "info": "3 барабана × 3 ряда, 5 линий: 3 горизонтали и 2 диагонали. Три одинаковых на линии — выигрыш.",
+    },
+    # 2) 5 барабанов × 3 ряда, 10 линий, дикий символ, выигрыш от 3 слева направо
+    "pelmen": {
+        "name": "Пельмень-Мания", "emoji": "🥟", "reels": 5, "rows": 3,
+        "lines": [[1, 1, 1, 1, 1], [0, 0, 0, 0, 0], [2, 2, 2, 2, 2], [0, 1, 2, 1, 0], [2, 1, 0, 1, 2],
+                  [0, 0, 1, 2, 2], [2, 2, 1, 0, 0], [1, 0, 0, 0, 1], [1, 2, 2, 2, 1], [0, 1, 1, 1, 0]],
+        "strip": _strip({"🧅": 8, "🥔": 8, "🍅": 6, "🧄": 5, "🩴": 3, "🥟": 2}, 22),
+        "wild": "🥟",
+        "pay": {"🧅": {3: 4, 4: 10, 5: 30}, "🥔": {3: 4, 4: 10, 5: 30}, "🍅": {3: 6, 4: 15, 5: 50},
+                "🧄": {3: 10, 4: 30, 5: 100}, "🩴": {3: 20, 4: 80, 5: 300}, "🥟": {3: 40, 4: 160, 5: 800}},
+        "info": "5 барабанов × 3 ряда, 10 линий. Комбинация считается слева направо от 3 одинаковых. 🥟 — дикий, заменяет любой символ.",
+    },
+    # 3) старый добрый «одноручный бандит»: 3 барабана × 1 ряд, 1 линия
+    "classic": {
+        "name": "Классика 777", "emoji": "7️⃣", "reels": 3, "rows": 1,
+        "lines": [[0, 0, 0]],
+        "strip": _strip({"🍒": 7, "🍋": 6, "🔔": 4, "💎": 3, "7️⃣": 2}, 33),
+        "wild": None,
+        "pay": {"🍒": {2: 2, 3: 8}, "🍋": {3: 9}, "🔔": {3: 17}, "💎": {3: 44}, "7️⃣": {3: 195}},
+        "info": "3 барабана, 1 линия. Две 🍒 слева — уже выигрыш, три 7️⃣ — джекпот x195!",
+    },
+}
+
+
+def slot_line_pay(cfg: dict, syms: list):
+    """Лучшая выплата по одной линии -> (выплата, сколько символов, символ) или None."""
+    wild, pay = cfg.get("wild"), cfg["pay"]
+    base = next((s for s in syms if s != wild), None)
+    best = None
+    for target in {t for t in (base, wild) if t}:
+        n = 0
+        for s in syms:
+            if s == target or (wild and s == wild):
+                n += 1
+            else:
+                break
+        table = pay.get(target, {})
+        ks = [k for k in table if k <= n]
+        p = table[max(ks)] if ks else 0
+        if p and (best is None or p > best[0]):
+            best = (p, n, target)
+    return best
+
+
+def slot_spin(cfg: dict):
+    """Один спин. Возвращает (сетка[ряд][барабан], список выигрышных линий, сумма выплат в «ставках на линию»)."""
+    strip, L = cfg["strip"], len(cfg["strip"])
+    stops = [secrets.randbelow(L) for _ in range(cfg["reels"])]
+    grid = [[strip[(stops[c] + r) % L] for c in range(cfg["reels"])] for r in range(cfg["rows"])]
+    wins, total = [], 0
+    for li, line in enumerate(cfg["lines"]):
+        res = slot_line_pay(cfg, [grid[line[c]][c] for c in range(cfg["reels"])])
+        if res:
+            p, n, sym = res
+            wins.append({"line": li, "cells": [[line[c], c] for c in range(n)], "sym": sym, "pay": p})
+            total += p
+    return grid, wins, total
+
+
+def slot_public(key: str) -> dict:
+    cfg = SLOTS[key]
+    syms = sorted(cfg["pay"], key=lambda s: -max(cfg["pay"][s].values()))
+    return {
+        "name": cfg["name"], "emoji": cfg["emoji"], "reels": cfg["reels"], "rows": cfg["rows"],
+        "lines": len(cfg["lines"]), "min_bet": len(cfg["lines"]), "wild": cfg["wild"],
+        "symbols": syms, "pay": cfg["pay"], "info": cfg["info"],
+    }
+
+
+@app.post("/api/slot/config")
+async def slot_config(req: Request):
+    await body_user(req)
+    return {"slots": {k: slot_public(k) for k in SLOTS}}
+
+
+@app.post("/api/slot/spin")
+async def slot_spin_api(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    key = body.get("slot")
+    cfg = SLOTS.get(key)
+    try:
+        bet = int(body.get("bet"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    if cfg is None or bet < len(cfg["lines"]) or bet > MAX_BET:   # минимум 1 монета на линию
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    with db_lock:  # атомарно: проверка баланса + списание/начисление
+        if is_banned(uid):
+            return BANNED_RESP()
+        bal = get_balance(uid)
+        if bet > bal:
+            return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        grid, wins, total = slot_spin(cfg)                    # результат выбирает только сервер
+        payout = bet * total // len(cfg["lines"])
+        bal = add_balance(uid, payout - bet, f"slot {key} {'win' if payout else 'lose'}")
+    return {"grid": grid, "wins": wins, "payout": payout, "bet": bet, "balance": bal}
+
+
 # ---------- Пополнение счёта ----------
 @app.post("/api/deposit/create")
 async def deposit_create(req: Request):
