@@ -319,7 +319,7 @@
 
   <div class="qa">
     <div id="qa_promo"><span class="qi">🎟</span><span>Промокод<small>Бонусы и фриспины</small></span></div>
-    <div id="qa_ref"><span class="qi">👥</span><span>Друзья<small>+50 USDT за друга</small></span></div>
+    <div id="qa_ref"><span class="qi">👥</span><span>Друзья<small>+<span class="rb">50</span> USDT за друга</small></span></div>
   </div>
 
   <div class="sec">🎰 Слоты</div>
@@ -419,8 +419,8 @@
   <div class="card refhero">
     <div class="rh-ico">👥</div>
     <h2 style="margin:6px 0 0">Приглашай друзей</h2>
-    <div class="rh-big">+50 USDT</div>
-    <div class="info" style="margin-top:0">за каждого друга, который пополнит счёт от 5 USDT</div>
+    <div class="rh-big">+<span class="rb">50</span> USDT</div>
+    <div class="info" style="margin-top:0">за каждого друга, который пополнит счёт от <span class="rm">5</span> USDT</div>
     <div class="reflink" id="ref_link">…</div>
     <div class="btnrow"><button id="ref_copy" type="button">📋 Копировать</button><button id="ref_share" class="pink" type="button">📤 Поделиться</button></div>
     <div class="msg" id="ref_msg"></div>
@@ -432,9 +432,9 @@
     <ul class="steps">
       <li><i>1</i><div>Скопируйте свою ссылку и отправьте другу</div></li>
       <li><i>2</i><div>Друг запускает бота по вашей ссылке</div></li>
-      <li><i>3</i><div>Друг вносит депозит от <b>5 USDT</b> — вам падает <b>50 USDT</b> на баланс</div></li>
+      <li><i>3</i><div>Друг вносит депозит от <b><span class="rm">5</span> USDT</b> — вам падает <b><span class="rb">50</span> USDT</b> на баланс</div></li>
     </ul>
-    <div class="info" style="opacity:.6;font-size:12px;margin-top:0">Бонус начисляется один раз за каждого друга, после того как его депозит зачислен. Работает только для тех, кто впервые открыл бота.</div>
+    <div class="info" style="opacity:.6;font-size:12px;margin-top:0">Бонус начисляется один раз за каждого друга, после того как его депозит зачислен. Перед выводом бонус нужно отыграть с вейджером x15 (сумма ставок в 15 раз больше бонуса). Работает только для тех, кто впервые открыл бота.</div>
   </div>
   <div class="card promo3">
     <span class="acc">🔥 АКЦИЯ</span>
@@ -528,7 +528,7 @@
       <input id="pr_uses" type="number" inputmode="numeric" min="1" placeholder="Сколько раз можно активировать">
       <button id="pr_create" class="pink" type="button" style="margin-top:12px">Создать промокод</button>
       <div class="msg" id="pr_msg"></div>
-      <div class="info" style="opacity:.65;font-size:12px">Один игрок — одна активация. Фриспины крутятся в слотах по заданной ставке, выигрыш идёт на баланс. Монеты зачисляются сразу. 1 USDT = 25 🪙.</div>
+      <div class="info" style="opacity:.65;font-size:12px">Один игрок — одна активация. Фриспины крутятся в слотах по заданной ставке, выигрыш идёт на баланс. Монеты зачисляются сразу. 1 USDT = <span class="rate">100</span> 🪙.</div>
     </div>
     <div class="card"><h2>📋 Промокоды</h2><div id="pr_list">…</div></div>
   </div>
@@ -556,17 +556,18 @@
       <div id="cp1" style="display:none"><div id="ch_list" style="text-align:left">…</div></div>
       <div id="cp2">
         <div id="dep1">
-          <div class="info" style="margin-top:0">Пополнение через <b>Crypto Bot</b> — оплата USDT в пару кликов, монеты приходят автоматически</div>
-          <input id="dep_amount" type="number" inputmode="numeric" min="25" placeholder="Сколько монет (от 25)" style="text-align:center">
-          <div class="chips" id="dep_chips"><span data-c="25">25</span><span data-c="100">100</span><span data-c="250">250</span><span data-c="500">500</span><span data-c="1000">1000</span></div>
-          <div class="big-usdt" style="font-size:24px"><span id="dep_prev">0.00</span> USDT</div>
-          <div class="info" style="opacity:.7;margin-top:4px">1 USDT = 25 🪙</div>
+          <div class="info" style="margin-top:0">Пополнение через <b>Crypto Bot</b>: USDT, TON, BTC, ETH, LTC, BNB, TRX, USDC — платите той валютой, которая удобна. Монеты приходят автоматически</div>
+          <input id="dep_amount" type="number" inputmode="numeric" min="100" placeholder="Сколько монет" style="text-align:center">
+          <div class="chips" id="dep_chips"></div>
+          <div class="big-usdt" style="font-size:24px">≈ $<span id="dep_prev">0.00</span></div>
+          <div class="info" style="opacity:.7;margin-top:4px">1 USDT = <span class="rate">100</span> 🪙</div>
           <button id="dep_next" class="pink">💎 Перейти к оплате</button>
           <div class="msg" id="dep_msg"></div>
         </div>
         <div id="dep2" style="display:none">
           <div class="info" style="margin-top:0">Пополнение на <b id="dep_coins"></b> 🪙</div>
-          <div class="big-usdt"><span id="dep_usdt">0</span> USDT</div>
+          <div class="big-usdt">$<span id="dep_usdt">0</span></div>
+          <div class="info" style="margin-top:4px;opacity:.75">Валюту оплаты выберете в Crypto Bot — сумма пересчитается по текущему курсу</div>
           <button id="dep_pay" class="pink">💎 Оплатить в Crypto Bot</button>
           <button id="dep_check">🔄 Проверить оплату</button>
           <button id="dep_back" style="border-color:#ffffff44;background:#ffffff0d">Назад</button>
@@ -576,13 +577,14 @@
       </div>
       <div id="cp3" style="display:none">
         <div class="info">Баланс: <b id="wd_bal">0</b> 🪙</div>
-        <input id="wd_coins" type="number" inputmode="numeric" min="25" placeholder="Сколько монет вывести (от 25)" style="text-align:center">
+        <input id="wd_coins" type="number" inputmode="numeric" min="500" placeholder="Сколько монет вывести" style="text-align:center">
+        <div class="info" id="wd_wager" style="display:none;color:#ffd76a;font-weight:700"></div>
         <div class="big-usdt" style="font-size:24px"><span id="wd_usdt">0.00</span> USDT</div>
-        <div class="info" style="opacity:.7">1 USDT = 25 🪙 · сеть TRC20</div>
+        <div class="info" style="opacity:.7">1 USDT = <span class="rate">100</span> 🪙 · сеть TRC20</div>
         <input id="wd_wallet" placeholder="Ваш кошелёк USDT (TRC20)" style="font-size:14px;text-align:center" autocomplete="off" autocapitalize="off" spellcheck="false">
         <button id="wd_send" class="pink">Вывести</button>
         <div class="msg" id="wd_msg" style="white-space:pre-line"></div>
-        <div class="info" style="opacity:.6;font-size:12px">Монеты списываются сразу. Если заявку отклонят — они вернутся на баланс.</div>
+        <div class="info" style="opacity:.6;font-size:12px">Монеты списываются сразу. Если заявку отклонят — они вернутся на баланс. Бонусы (промокоды, реферальные, выигрыш с фриспинов) нужно отыграть с вейджером x15.</div>
       </div>
     </div>
   </div>
@@ -715,7 +717,7 @@ async function init() {
   if (u && u.first_name) document.getElementById("hello_name").textContent = "Привет, " + u.first_name;
   const { status, data } = await api("/api/status");
   if (status !== 200) return;
-  prizes = data.prizes; left = data.left; setBal(data.balance || 0); setPacks(data.packs);
+  applyRate(data); prizes = data.prizes; left = data.left; setBal(data.balance || 0); setPacks(data.packs);
   if (data.is_admin) { isAdmin = true; $("n3").style.display = "block"; }
   if (data.is_owner) { $("a5").style.display = "block"; $("a6").style.display = "block"; }
   draw(); buildBulbs(); buildPrizeList(); startTimer();
@@ -761,6 +763,19 @@ hist.style.display = "none";
 
 // ---------- навигация, баланс ----------
 let isAdmin = false;
+let RATE = 100, MIN_DEP = 100, MIN_WD = 500;                       // перезаписываются значениями с сервера (/api/status)
+const toUsdt = c => (c / RATE).toFixed(2);
+function applyRate(d) {
+  RATE = d.rate || RATE; MIN_DEP = d.min_deposit || MIN_DEP; MIN_WD = d.min_withdraw || MIN_WD;
+  document.querySelectorAll(".rate").forEach(e => e.textContent = RATE);
+  document.querySelectorAll(".rb").forEach(e => e.textContent = d.ref_bonus_usdt ?? e.textContent);
+  document.querySelectorAll(".rm").forEach(e => e.textContent = d.ref_min_usdt ?? e.textContent);
+  $("dep_amount").min = MIN_DEP; $("dep_amount").placeholder = `Сколько монет (от ${MIN_DEP})`;
+  $("wd_coins").min = MIN_WD; $("wd_coins").placeholder = `Сколько монет вывести (от ${MIN_WD})`;
+  const ch = $("dep_chips"); ch.replaceChildren();
+  [1, 4, 10, 20, 50].forEach(u => { const sp = document.createElement("span"); sp.dataset.c = u * RATE; sp.textContent = u * RATE;
+    sp.onclick = () => { $("dep_amount").value = sp.dataset.c; $("dep_amount").oninput(); }; ch.appendChild(sp); });
+}
 const $ = id => document.getElementById(id);
 function setBal(v) { $("bal").textContent = v.toLocaleString("ru-RU"); window._bal = v; }
 // страницы: 1 — меню, 2 — экран игры, 3 — админ, 4 — друзья
@@ -1231,8 +1246,7 @@ const depStop = () => { if (depTimer) clearInterval(depTimer); depTimer = null; 
 $("dep_open").onclick = () => { depStep(1); $("dep_amount").value = ""; $("dep_prev").textContent = "0.00"; $("dep_msg").textContent = ""; $("dep_msg2").textContent = ""; cashTab(2); $("dep_ov").classList.add("on"); };
 $("c_x").onclick = () => $("dep_ov").classList.remove("on");
 $("dep_back").onclick = () => { depStep(1); $("dep_msg").textContent = ""; };
-$("dep_amount").oninput = () => { const c = parseInt($("dep_amount").value, 10) || 0; $("dep_prev").textContent = (c*4/100).toFixed(2); };
-document.querySelectorAll("#dep_chips span").forEach(el => el.onclick = () => { $("dep_amount").value = el.dataset.c; $("dep_amount").oninput(); });
+$("dep_amount").oninput = () => { const c = parseInt($("dep_amount").value, 10) || 0; $("dep_prev").textContent = toUsdt(c); };
 async function depCheck(manual) {
   if (!depId) return;
   const { status, data } = await post("/api/deposit/status", { id: depId });
@@ -1251,7 +1265,7 @@ async function depCheck(manual) {
 }
 $("dep_next").onclick = async () => {
   const amount = parseInt($("dep_amount").value, 10);
-  if (!amount || amount < 25) { $("dep_msg").textContent = "Минимум 25 монет (1 USDT)"; return; }
+  if (!amount || amount < MIN_DEP) { $("dep_msg").textContent = `Минимум ${MIN_DEP} монет (${toUsdt(MIN_DEP)} USDT)`; return; }
   $("dep_next").disabled = true;
   const { status, data } = await post("/api/deposit/create", { amount });
   $("dep_next").disabled = false;
@@ -1341,9 +1355,15 @@ $("pp_btn").onclick = async () => {
 function cashTab(n) {
   [1,2,3].forEach(i => { $("cp"+i).style.display = i===n ? "block" : "none"; $("ct"+i).classList.toggle("on", i===n); });
   if (n===1) loadCashHistory();
-  if (n===3) { $("wd_bal").textContent = (window._bal||0).toLocaleString("ru-RU"); $("wd_msg").textContent = ""; }
+  if (n===3) { $("wd_bal").textContent = (window._bal||0).toLocaleString("ru-RU"); $("wd_msg").textContent = ""; loadWager(); }
 }
 [1,2,3].forEach(i => $("ct"+i).onclick = () => cashTab(i));
+async function loadWager() {
+  const { status, data } = await post("/api/wager"), b = $("wd_wager");
+  if (status !== 200 || !data.left) { b.style.display = "none"; return; }
+  b.style.display = "block";
+  b.textContent = `🎯 Бонус нужно отыграть (вейджер x${data.mult}): осталось поставить ${data.left.toLocaleString("ru-RU")} 🪙. Вывод станет доступен после этого`;
+}
 const CH_ST = {
   deposit:  { pending: "⏳ Ждёт оплаты", expired: "⌛ Не оплачен", claimed: "⏳ Проверяется", done: "✅ Зачислено", rejected: "❌ Отклонено" },
   withdraw: { pending: "⏳ Ожидает", approved: "✅ Одобрено", rejected: "❌ Отклонено", frozen: "🧊 Заморожено" },
@@ -1365,10 +1385,10 @@ async function loadCashHistory() {
     r.append(b, u); row.append(l, r); box.appendChild(row);
   });
 }
-$("wd_coins").oninput = () => { const c = parseInt($("wd_coins").value, 10) || 0; $("wd_usdt").textContent = (c*4/100).toFixed(2); };
+$("wd_coins").oninput = () => { const c = parseInt($("wd_coins").value, 10) || 0; $("wd_usdt").textContent = toUsdt(c); };
 $("wd_send").onclick = async () => {
   const coins = parseInt($("wd_coins").value, 10), wallet = $("wd_wallet").value.trim(), m = $("wd_msg");
-  if (!coins || coins < 25) { m.textContent = "Минимум 25 монет (1 USDT)"; return; }
+  if (!coins || coins < MIN_WD) { m.textContent = `Минимум для вывода — ${MIN_WD} монет (${toUsdt(MIN_WD)} USDT)`; return; }
   if (coins > (window._bal||0)) { m.textContent = "Недостаточно монет 🪙"; return; }
   if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(wallet)) { m.textContent = "Проверьте адрес TRC20: начинается с T, 34 символа"; return; }
   $("wd_send").disabled = true;
@@ -1539,7 +1559,7 @@ function prList(items) {
 }
 async function loadPromos() { const { status, data } = await post("/api/admin/promo/list"); if (status === 200) prList(data.items); }
 $("a7").addEventListener("click", loadPromos);
-$("pr_coins").oninput = () => { const c = parseInt($("pr_coins").value, 10) || 0; $("pr_usdt").textContent = c ? `≈ ${(c*4/100).toFixed(2)} USDT` : ""; };
+$("pr_coins").oninput = () => { const c = parseInt($("pr_coins").value, 10) || 0; $("pr_usdt").textContent = c ? `≈ ${toUsdt(c)} USDT` : ""; };
 $("pr_create").onclick = async () => {
   const g = id => parseInt($(id).value, 10) || 0, m = $("pr_msg");
   const body = { code: $("pr_code").value.trim(), coins: g("pr_coins"), spins: g("pr_spins"), bet: g("pr_bet"), max_uses: g("pr_uses") };

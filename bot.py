@@ -49,8 +49,8 @@ COIN_SIDES = {"pelmen": ("Пельмень", "🥟"), "tapok": ("Тапок", "�
 MAX_BET = 1_000_000_000
 CURRENCY = "🪙"
 
-# ---- пополнение (1 USDT = 25 монет) ----
-COINS_PER_USDT = 25
+# ---- курс: сколько монет даём за 1 USDT (меняется переменной COINS_PER_USDT; НЕ меняйте после появления балансов) ----
+COINS_PER_USDT = max(1, int(os.environ.get("COINS_PER_USDT") or 100))
 DEPOSIT_NETWORK = "TRC20"   # сеть для вывода (вывод обрабатывается вручную)
 
 # ---- приём оплаты через Crypto Pay (@CryptoBot) ----
@@ -59,15 +59,20 @@ CRYPTO_TOKEN = (os.environ.get("CRYPTOBOT_TOKEN") or "").strip()
 CRYPTO_API = ("https://testnet-pay.crypt.bot/api" if os.environ.get("CRYPTOBOT_TESTNET") == "1"
               else "https://pay.crypt.bot/api")
 INVOICE_TTL = 3600           # сколько секунд счёт можно оплатить
-MIN_DEPOSIT, MAX_DEPOSIT = 25, 1_000_000   # в монетах (минимум = 1 USDT)
+# Счёт выставляется в долларах (1 USDT = 1 USD), а платить игрок может любой из этих валют — выбирает в Crypto Bot.
+CRYPTO_ASSETS = (os.environ.get("CRYPTO_ASSETS") or "USDT,TON,BTC,ETH,LTC,BNB,TRX,USDC").replace(" ", "")
+MIN_DEPOSIT, MAX_DEPOSIT = COINS_PER_USDT, 1_000_000   # в монетах (минимум = 1 USDT)
 
 
 def usdt_str(coins: int) -> str:
-    cents = coins * 100 // COINS_PER_USDT   # 25 монет = 1 USDT -> всегда ровно до сотых
+    cents = coins * 100 // COINS_PER_USDT   # округляем вниз до сотых
     return f"{cents // 100}.{cents % 100:02d}"
 
+# ---- вейджер: бонусные монеты нужно отыграть (сумма ставок) в N раз больше бонуса, прежде чем выводить ----
+WAGER_MULT = int(os.environ.get("WAGER_MULT") or 15)
+
 # ---- вывод ----
-MIN_WITHDRAW = 25   # в монетах (1 USDT)
+MIN_WITHDRAW = int(os.environ.get("MIN_WITHDRAW_USDT") or 5) * COINS_PER_USDT   # минимум на вывод (по умолчанию 5 USDT)
 WALLET_RE = re.compile(r"^T[1-9A-HJ-NP-Za-km-z]{33}$")  # адрес TRC20
 
 # ---- крестики-нолики и наперстки ----
@@ -92,7 +97,7 @@ WHEEL_EMOJI = {p["name"]: p["emoji"] for p in WHEEL_PRIZES}
 
 # ---- реферальная программа ----
 REF_MIN_USDT = 5                                   # минимальный депозит друга
-REF_BONUS_USDT = 50                                # бонус пригласившему
+REF_BONUS_USDT = int(os.environ.get("REF_BONUS_USDT") or 50)   # бонус пригласившему
 REF_MIN_COINS = REF_MIN_USDT * COINS_PER_USDT
 REF_BONUS_COINS = REF_BONUS_USDT * COINS_PER_USDT
 
@@ -126,6 +131,7 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS freespins(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, spins_left INTEGER NOT NULL, bet INTEGER NOT NULL, source TEXT, ts REAL);
         CREATE TABLE IF NOT EXISTS promos(code TEXT PRIMARY KEY, coins INTEGER NOT NULL DEFAULT 0, spins INTEGER NOT NULL DEFAULT 0, bet INTEGER NOT NULL DEFAULT 0, max_uses INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, ts REAL);
         CREATE TABLE IF NOT EXISTS promo_uses(code TEXT, user_id INTEGER, ts REAL, PRIMARY KEY(code, user_id));
+        CREATE TABLE IF NOT EXISTS wager(user_id INTEGER PRIMARY KEY, left INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS referrals(user_id INTEGER PRIMARY KEY, referrer_id INTEGER NOT NULL, ts REAL, rewarded INTEGER NOT NULL DEFAULT 0, reward_ts REAL);
         """
     )
@@ -239,8 +245,21 @@ def add_balance(uid: int, delta: int, reason: str) -> int:
     db.execute("INSERT OR IGNORE INTO balances(user_id, coins) VALUES(?,0)", (uid,))
     db.execute("UPDATE balances SET coins = coins + ? WHERE user_id=?", (delta, uid))
     db.execute("INSERT INTO tx VALUES(?,?,?,?)", (uid, time.time(), delta, reason))
+    if delta > 0 and (reason.startswith(("referral bonus", "promo ", "free "))):   # бонусные начисления -> вейджер
+        db.execute("INSERT INTO wager(user_id, left) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET left=left+excluded.left",
+                   (uid, delta * WAGER_MULT))
     db.commit()
     return get_balance(uid)
+
+
+def wager_play(uid: int, bet: int):
+    """Реальная ставка (не фриспин) засчитывается в отыгрыш. Вызывать под db_lock."""
+    db.execute("UPDATE wager SET left=MAX(0, left-?) WHERE user_id=? AND left>0", (bet, uid))
+
+
+def wager_left(uid: int) -> int:
+    row = db.execute("SELECT left FROM wager WHERE user_id=?", (uid,)).fetchone()
+    return row[0] if row else 0
 
 
 def resolve_target(target: str):
@@ -340,6 +359,8 @@ async def status(req: Request):
         "is_owner": user["id"] == OWNER_ID,
         "left": seconds_left(user["id"]),
         "packs": packs,
+        "wager_left": wager_left(user["id"]), "rate": COINS_PER_USDT, "min_deposit": MIN_DEPOSIT, "min_withdraw": MIN_WITHDRAW,
+        "ref_bonus_usdt": REF_BONUS_USDT, "ref_min_usdt": REF_MIN_USDT,
         "prizes": [{k: p.get(k) for k in ("kind", "name", "emoji", "big", "small", "color", "dark", "rare")}
                    for p in WHEEL_PRIZES],
     }
@@ -411,6 +432,7 @@ async def coin(req: Request):
             if result == side:
                 break
         won = result == side
+        wager_play(uid, bet)
         bal = add_balance(uid, bet if won else -bet, f"coin {'win' if won else 'lose'}")
     return {"result": result, "won": won, "balance": bal}
 
@@ -598,6 +620,7 @@ async def bj_start(req: Request):
         bal = get_balance(uid)
         if bet > bal:
             return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        wager_play(uid, bet)
         add_balance(uid, -bet, "bj bet")
         deck = [r + s_ for r in RANKS for s_ in SUITS]
         secrets.SystemRandom().shuffle(deck)
@@ -636,6 +659,7 @@ async def bj_action(req: Request):
         if act == "double":
             if len(g["player"]) != 2 or get_balance(uid) < g["bet"]:
                 return JSONResponse({"error": "cant_double"}, status_code=400)
+            wager_play(uid, g["bet"])
             add_balance(uid, -g["bet"], "bj double")
             g["bet"] *= 2
             g["player"].append(g["deck"].pop())
@@ -841,6 +865,7 @@ async def ttt_start(req: Request):
         bal = get_balance(uid)
         if bet > bal:
             return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        wager_play(uid, bet)
         add_balance(uid, -bet, "ttt bet")
         b = "-" * 9
         db.execute("INSERT OR REPLACE INTO ttt VALUES(?,?,?)", (uid, b, bet))
@@ -904,6 +929,7 @@ async def shell(req: Request):
                 break
         won = ball == cup
         payout = bet * SHELL_MULT[0] // SHELL_MULT[1] if won else 0
+        wager_play(uid, bet)
         bal = add_balance(uid, payout - bet, f"shell {'win' if won else 'lose'}")
     return {"ball": ball, "won": won, "payout": payout, "balance": bal}
 
@@ -1154,6 +1180,7 @@ async def slot_spin_api(req: Request):
             db.execute("DELETE FROM freespins WHERE spins_left<=0")
             delta, kind_tag = payout, "free "
         else:
+            wager_play(uid, bet)
             delta, kind_tag = payout - bet, ""
         reason = f"{kind_tag}slot {key} {'win' if payout else 'lose'}{tag}"
         if delta:
@@ -1211,8 +1238,12 @@ async def settle_invoice(inv: dict) -> str:
             return "skip"
         if cur == "done":
             return "skip"
-        try:   # сверяем, что счёт именно на ту сумму и в USDT
-            ok_sum = inv.get("asset") == "USDT" and Decimal(str(inv.get("amount"))) == Decimal(usdt_str(coins))
+        try:   # сверяем, что счёт именно на ту сумму: в USD (любая валюта оплаты) или в USDT (старый формат)
+            same = Decimal(str(inv.get("amount"))) == Decimal(usdt_str(coins))
+            if inv.get("currency_type") == "fiat":
+                ok_sum = same and inv.get("fiat") == "USD"
+            else:
+                ok_sum = same and inv.get("asset") == "USDT"
         except Exception:
             ok_sum = False
         if not ok_sum:
@@ -1222,12 +1253,13 @@ async def settle_invoice(inv: dict) -> str:
         ref_note = _ref_bonus_nolock(uid, coins)
         db.commit()
         who = db.execute("SELECT first_name, username FROM users WHERE user_id=?", (uid,)).fetchone() or ("", "")
+    paid_with = f"{inv.get('paid_amount')} {inv.get('paid_asset')}" if inv.get("paid_asset") else "USDT"
     await tg("sendMessage", chat_id=uid, parse_mode="HTML",
-             text=f"✅ <b>Оплата получена!</b>\n\nНа счёт зачислено: <b>+{coins} {CURRENCY}</b> ({usdt_str(coins)} USDT)\n"
+             text=f"✅ <b>Оплата получена!</b>\n\nНа счёт зачислено: <b>+{coins} {CURRENCY}</b> (${usdt_str(coins)})\n"
                   f"Ваш баланс: <b>{new_bal} {CURRENCY}</b>\n\nУдачной игры! 🍀",
              reply_markup={"inline_keyboard": [[{"text": "🎰 Играть", "web_app": {"url": BASE_URL}}]]})
     await tg("sendMessage", chat_id=OWNER_ID,
-             text=f"💰 Пополнение #{dep_id}: {usdt_str(coins)} USDT = {coins} {CURRENCY}\n"
+             text=f"💰 Пополнение #{dep_id}: ${usdt_str(coins)} = {coins} {CURRENCY}\nОплачено: {paid_with}\n"
                   f"От: {who[0] or '—'} @{who[1] or '—'} (id {uid})")
     if ref_note:
         await tg("sendMessage", chat_id=ref_note[0],
@@ -1287,14 +1319,20 @@ async def deposit_create(req: Request):
         db.commit()
         dep_id = cur.lastrowid
     usdt = usdt_str(amount)
-    params = dict(asset="USDT", amount=usdt, description=f"Пополнение: {amount} монет",
-                  payload=f"dep:{dep_id}:{uid}", expires_in=INVOICE_TTL,
+    params = dict(currency_type="fiat", fiat="USD", accepted_assets=CRYPTO_ASSETS, amount=usdt,
+                  description=f"Пополнение: {amount} монет", payload=f"dep:{dep_id}:{uid}", expires_in=INVOICE_TTL,
                   allow_comments=False, allow_anonymous=False)
     bot = await ensure_bot_username()
     if bot:   # после оплаты в Crypto Bot появится кнопка «Вернуться в бота»
         params.update(paid_btn_name="openBot", paid_btn_url=f"https://t.me/{bot}")
     try:
-        inv = await crypto("createInvoice", **params)
+        try:
+            inv = await crypto("createInvoice", **params)
+        except Exception as e:      # на случай, если какая-то из валют недоступна приложению — выставляем счёт в USDT
+            print("createInvoice (multi-asset) failed, fallback to USDT:", e)
+            for k in ("currency_type", "fiat", "accepted_assets"):
+                params.pop(k)
+            inv = await crypto("createInvoice", asset="USDT", **params)
     except Exception as e:
         print("createInvoice:", e)
         with db_lock:
@@ -1587,6 +1625,10 @@ async def withdraw_create(req: Request):
         bal = get_balance(uid)
         if coins > bal:
             return JSONResponse({"error": "Недостаточно монет", "balance": bal}, status_code=400)
+        wl = wager_left(uid)
+        if wl > 0:
+            return JSONResponse({"error": f"Сначала отыграйте бонус: осталось поставить {wl} {CURRENCY} "
+                                          f"(вейджер x{WAGER_MULT})", "wager_left": wl}, status_code=400)
         usdt = usdt_str(coins)
         cur = db.execute("INSERT INTO withdrawals(user_id, ts, coins, usdt, wallet, status) VALUES(?,?,?,?,?,'pending')",
                          (uid, time.time(), coins, usdt, wallet))
@@ -1595,6 +1637,13 @@ async def withdraw_create(req: Request):
         card = wd_card_nolock(wd_id)
     await tg("sendMessage", chat_id=OWNER_ID, text=card[0], parse_mode="HTML", reply_markup=wd_kb("pending", wd_id))
     return {"ok": True, "id": wd_id, "coins": coins, "usdt": usdt, "balance": new_bal}
+
+
+@app.post("/api/wager")
+async def wager_info(req: Request):
+    _, user = await body_user(req)
+    with db_lock:
+        return {"left": wager_left(user["id"]), "mult": WAGER_MULT}
 
 
 @app.post("/api/cashier/history")
