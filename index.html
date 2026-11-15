@@ -115,6 +115,9 @@
   .pu-title { font-size:20px; font-weight:800; margin-top:6px; background:linear-gradient(90deg,var(--cyan),var(--pink));
               -webkit-background-clip:text; background-clip:text; color:transparent; }
   .pu-text { margin-top:10px; font-size:16px; line-height:1.5; white-space:pre-line; word-break:break-word; animation:fadein 1s .3s both; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:12px; }
+  .chips span { padding:7px 14px; border-radius:14px; border:1px solid var(--cyan); background:#19d3c522; font-size:14px; font-weight:700; cursor:pointer; user-select:none; }
+  .chips span:active { transform:scale(.95); }
   .wallet { margin-top:8px; padding:10px; border-radius:10px; background:#00000066; border:1px dashed var(--cyan); font-size:13px; word-break:break-all; user-select:all; }
   .big-usdt { font-size:30px; font-weight:800; color:var(--cyan); margin-top:6px; }
   .cx { position:absolute; top:10px; right:16px; font-size:18px; opacity:.7; cursor:pointer; z-index:2; }
@@ -553,21 +556,22 @@
       <div id="cp1" style="display:none"><div id="ch_list" style="text-align:left">…</div></div>
       <div id="cp2">
         <div id="dep1">
+          <div class="info" style="margin-top:0">Пополнение через <b>Crypto Bot</b> — оплата USDT в пару кликов, монеты приходят автоматически</div>
           <input id="dep_amount" type="number" inputmode="numeric" min="25" placeholder="Сколько монет (от 25)" style="text-align:center">
-          <div class="info" style="opacity:.7">1 USDT = 25 🪙</div>
-          <button id="dep_next">Продолжить</button>
+          <div class="chips" id="dep_chips"><span data-c="25">25</span><span data-c="100">100</span><span data-c="250">250</span><span data-c="500">500</span><span data-c="1000">1000</span></div>
+          <div class="big-usdt" style="font-size:24px"><span id="dep_prev">0.00</span> USDT</div>
+          <div class="info" style="opacity:.7;margin-top:4px">1 USDT = 25 🪙</div>
+          <button id="dep_next" class="pink">💎 Перейти к оплате</button>
           <div class="msg" id="dep_msg"></div>
         </div>
         <div id="dep2" style="display:none">
-          <div class="info">Для пополнения на <b id="dep_coins"></b> 🪙 отправьте ровно</div>
+          <div class="info" style="margin-top:0">Пополнение на <b id="dep_coins"></b> 🪙</div>
           <div class="big-usdt"><span id="dep_usdt">0</span> USDT</div>
-          <div class="info">Сеть: <b id="dep_net"></b></div>
-          <div class="wallet" id="dep_wallet"></div>
-          <button id="dep_copy">📋 Скопировать адрес</button>
-          <button id="dep_paid" class="pink">✅ Я оплатил</button>
+          <button id="dep_pay" class="pink">💎 Оплатить в Crypto Bot</button>
+          <button id="dep_check">🔄 Проверить оплату</button>
           <button id="dep_back" style="border-color:#ffffff44;background:#ffffff0d">Назад</button>
-          <div class="msg" id="dep_msg2"></div>
-          <div class="info" style="opacity:.6;font-size:12px">Монеты зачисляются администратором после проверки перевода. Отправляйте только USDT в сети TRC20 — переводы в других сетях не вернуть.</div>
+          <div class="msg" id="dep_msg2" style="white-space:pre-line"></div>
+          <div class="info" style="opacity:.6;font-size:12px">После оплаты монеты зачисляются автоматически, обычно в течение минуты. Счёт действителен 1 час.</div>
         </div>
       </div>
       <div id="cp3" style="display:none">
@@ -1220,12 +1224,31 @@ $("sl_spin").onclick = async () => {
   slBusy = false; $("sl_spin").disabled = false;
 };
 
-// ---------- Пополнение ----------
-let depId = null;
+// ---------- Пополнение (Crypto Pay) ----------
+let depId = null, depTimer = null, depUrl = "";
 const depStep = n => { $("dep1").style.display = n===1 ? "block" : "none"; $("dep2").style.display = n===2 ? "block" : "none"; };
-$("dep_open").onclick = () => { depStep(1); $("dep_amount").value = ""; $("dep_msg").textContent = ""; $("dep_msg2").textContent = ""; $("dep_paid").disabled = false; cashTab(2); $("dep_ov").classList.add("on"); };
+const depStop = () => { if (depTimer) clearInterval(depTimer); depTimer = null; };
+$("dep_open").onclick = () => { depStep(1); $("dep_amount").value = ""; $("dep_prev").textContent = "0.00"; $("dep_msg").textContent = ""; $("dep_msg2").textContent = ""; cashTab(2); $("dep_ov").classList.add("on"); };
 $("c_x").onclick = () => $("dep_ov").classList.remove("on");
-$("dep_back").onclick = () => depStep(1);
+$("dep_back").onclick = () => { depStep(1); $("dep_msg").textContent = ""; };
+$("dep_amount").oninput = () => { const c = parseInt($("dep_amount").value, 10) || 0; $("dep_prev").textContent = (c*4/100).toFixed(2); };
+document.querySelectorAll("#dep_chips span").forEach(el => el.onclick = () => { $("dep_amount").value = el.dataset.c; $("dep_amount").oninput(); });
+async function depCheck(manual) {
+  if (!depId) return;
+  const { status, data } = await post("/api/deposit/status", { id: depId });
+  if (status !== 200) { if (manual) $("dep_msg2").textContent = "Ошибка, попробуйте ещё раз"; return; }
+  if (data.status === "done") {
+    depStop(); setBal(data.balance);
+    $("dep_pay").style.display = "none"; $("dep_check").style.display = "none";
+    $("dep_msg2").textContent = "✅ Оплата получена! Монеты уже на балансе 🎉";
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("success");
+  } else if (data.status === "expired" || data.status === "failed") {
+    depStop(); $("dep_pay").style.display = "none";
+    $("dep_msg2").textContent = "⌛ Счёт истёк. Нажмите «Назад» и создайте новый";
+  } else if (manual) {
+    $("dep_msg2").textContent = "Оплата пока не поступила. Если уже заплатили — подождите минуту ⏳";
+  }
+}
 $("dep_next").onclick = async () => {
   const amount = parseInt($("dep_amount").value, 10);
   if (!amount || amount < 25) { $("dep_msg").textContent = "Минимум 25 монет (1 USDT)"; return; }
@@ -1233,21 +1256,19 @@ $("dep_next").onclick = async () => {
   const { status, data } = await post("/api/deposit/create", { amount });
   $("dep_next").disabled = false;
   if (status !== 200) { $("dep_msg").textContent = data.error === "banned" ? "Доступ закрыт 🚫" : (data.error || "Ошибка, попробуйте позже"); return; }
-  depId = data.id; $("dep_coins").textContent = data.amount; $("dep_usdt").textContent = data.usdt; $("dep_net").textContent = data.network; $("dep_wallet").textContent = data.wallet;
+  depStop(); depId = data.id; depUrl = data.pay_url;
+  $("dep_coins").textContent = data.amount; $("dep_usdt").textContent = data.usdt;
+  $("dep_pay").style.display = ""; $("dep_check").style.display = ""; $("dep_msg2").textContent = "";
   depStep(2);
+  depTimer = setInterval(() => depCheck(false), 5000);   // сами следим за оплатой
 };
-$("dep_copy").onclick = async () => {
-  const w = $("dep_wallet").textContent;
-  try { await navigator.clipboard.writeText(w); }
-  catch (e) { const r = document.createRange(); r.selectNodeContents($("dep_wallet")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.execCommand("copy"); }
-  $("dep_msg2").textContent = "Адрес скопирован ✅";
+$("dep_pay").onclick = () => {
+  if (!depUrl) return;
+  try { /t\.me\//.test(depUrl) ? tg.openTelegramLink(depUrl) : tg.openLink(depUrl); } catch (e) { window.open(depUrl, "_blank"); }
+  $("dep_msg2").textContent = "Оплатите счёт в Crypto Bot и вернитесь сюда — баланс обновится сам ✨";
 };
-$("dep_paid").onclick = async () => {
-  $("dep_paid").disabled = true;
-  const { status, data } = await post("/api/deposit/paid", { id: depId });
-  $("dep_msg2").textContent = status === 200 ? "✅ Заявка отправлена администратору. Монеты придут после проверки перевода." : "❌ " + (data.error || "Ошибка");
-  if (status !== 200) $("dep_paid").disabled = false;
-};
+$("dep_check").onclick = () => depCheck(true);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && depTimer) depCheck(false); });
 
 // ---------- Всплывающие сообщения ----------
 let puQueue = [], puShowing = false;
@@ -1324,7 +1345,7 @@ function cashTab(n) {
 }
 [1,2,3].forEach(i => $("ct"+i).onclick = () => cashTab(i));
 const CH_ST = {
-  deposit:  { claimed: "⏳ Проверяется", done: "✅ Зачислено", rejected: "❌ Отклонено" },
+  deposit:  { pending: "⏳ Ждёт оплаты", expired: "⌛ Не оплачен", claimed: "⏳ Проверяется", done: "✅ Зачислено", rejected: "❌ Отклонено" },
   withdraw: { pending: "⏳ Ожидает", approved: "✅ Одобрено", rejected: "❌ Отклонено", frozen: "🧊 Заморожено" },
 };
 async function loadCashHistory() {

@@ -11,6 +11,7 @@ import secrets
 import sqlite3
 import hashlib
 import threading
+from decimal import Decimal
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qsl
 
@@ -40,7 +41,8 @@ DB_PERSISTENT = bool(os.environ.get("DB_PATH")) or DB_PATH.startswith("/data/") 
 
 COOLDOWN = 12 * 60 * 60  # 12 часов
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
-FEEDBACK_BTN = "✉️ Обратная связь"
+MENU_BTN = "🏠 Главное меню"
+OLD_FEEDBACK_BTN = "✉️ Обратная связь"   # старая кнопка у прежних игроков — заменяем на меню
 
 # ---- мини-игра «Пельмень или Тапок» (вместо орла и решки) ----
 COIN_SIDES = {"pelmen": ("Пельмень", "🥟"), "tapok": ("Тапок", "🩴")}
@@ -49,8 +51,14 @@ CURRENCY = "🪙"
 
 # ---- пополнение (1 USDT = 25 монет) ----
 COINS_PER_USDT = 25
-DEPOSIT_WALLET = os.environ.get("DEPOSIT_WALLET") or "TLdiZJdSN82A1HDRB3WBTDeTXmmv2xJLMT"
-DEPOSIT_NETWORK = "TRC20"
+DEPOSIT_NETWORK = "TRC20"   # сеть для вывода (вывод обрабатывается вручную)
+
+# ---- приём оплаты через Crypto Pay (@CryptoBot) ----
+# Токен берём ТОЛЬКО из переменной окружения CRYPTOBOT_TOKEN (Railway -> Variables), в коде его не храним.
+CRYPTO_TOKEN = (os.environ.get("CRYPTOBOT_TOKEN") or "").strip()
+CRYPTO_API = ("https://testnet-pay.crypt.bot/api" if os.environ.get("CRYPTOBOT_TESTNET") == "1"
+              else "https://pay.crypt.bot/api")
+INVOICE_TTL = 3600           # сколько секунд счёт можно оплатить
 MIN_DEPOSIT, MAX_DEPOSIT = 25, 1_000_000   # в монетах (минимум = 1 USDT)
 
 
@@ -121,6 +129,12 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS referrals(user_id INTEGER PRIMARY KEY, referrer_id INTEGER NOT NULL, ts REAL, rewarded INTEGER NOT NULL DEFAULT 0, reward_ts REAL);
         """
     )
+    for _col in ("invoice_id INTEGER", "pay_url TEXT"):     # миграция: поля для счетов Crypto Pay
+        try:
+            db.execute(f"ALTER TABLE deposits ADD COLUMN {_col}")
+        except sqlite3.OperationalError:
+            pass
+    db.execute("CREATE INDEX IF NOT EXISTS idx_dep_invoice ON deposits(invoice_id)")
     db.commit()
 
 
@@ -158,7 +172,13 @@ async def lifespan(app: FastAPI):
                  text="⚠️ База данных лежит НЕ на постоянном диске — балансы и заявки сотрутся при перезапуске.\n"
                       "Подключите в Railway Volume с путём /data и перезапустите сервис.")
     await ensure_bot_username()
+    if not CRYPTO_TOKEN:
+        await tg("sendMessage", chat_id=OWNER_ID,
+                 text="⚠️ Не задана переменная CRYPTOBOT_TOKEN — пополнения через Crypto Bot не работают.\n"
+                      "Добавьте её в Railway → Variables и перезапустите сервис.")
+    poller = asyncio.create_task(deposit_poller())
     yield
+    poller.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -1145,7 +1165,102 @@ async def slot_spin_api(req: Request):
     return result
 
 
-# ---------- Пополнение счёта ----------
+# ---------- Пополнение счёта (Crypto Pay) ----------
+# Бот ТОЛЬКО принимает деньги: создаёт счёт в @CryptoBot, ждёт оплату (вебхук + опрос) и зачисляет монеты.
+# Вывод по-прежнему ручной (см. раздел «Касса: вывод средств»).
+async def crypto(method: str, **params):
+    if not CRYPTO_TOKEN:
+        raise RuntimeError("CRYPTOBOT_TOKEN не задан")
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.post(f"{CRYPTO_API}/{method}", json=params, headers={"Crypto-Pay-API-Token": CRYPTO_TOKEN})
+    data = r.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Crypto Pay {method}: {data.get('error')}")
+    return data["result"]
+
+
+def _ref_bonus_nolock(uid: int, coins: int):
+    """Первый депозит друга от REF_MIN_USDT -> бонус пригласившему. Под db_lock. -> (id, имя друга, баланс) или None."""
+    if coins < REF_MIN_COINS:
+        return None
+    ref = db.execute("SELECT referrer_id FROM referrals WHERE user_id=? AND rewarded=0", (uid,)).fetchone()
+    if not ref:
+        return None
+    db.execute("UPDATE referrals SET rewarded=1, reward_ts=? WHERE user_id=?", (time.time(), uid))
+    ref_bal = add_balance(ref[0], REF_BONUS_COINS, f"referral bonus (friend {uid})")
+    fr = db.execute("SELECT first_name FROM users WHERE user_id=?", (uid,)).fetchone()
+    return ref[0], (fr[0] if fr and fr[0] else "ваш друг"), ref_bal
+
+
+async def settle_invoice(inv: dict) -> str:
+    """Обрабатывает счёт Crypto Pay (из вебхука или опроса). Идемпотентно: монеты зачисляются один раз.
+    Возвращает 'done' | 'expired' | 'skip'."""
+    inv_id, st = inv.get("invoice_id"), inv.get("status")
+    if inv_id is None or st not in ("paid", "expired"):
+        return "skip"
+    with db_lock:
+        row = db.execute("SELECT id, user_id, amount, status FROM deposits WHERE invoice_id=?", (inv_id,)).fetchone()
+        if not row:
+            return "skip"
+        dep_id, uid, coins, cur = row
+        if st == "expired":
+            if cur in ("new", "pending"):
+                db.execute("UPDATE deposits SET status='expired' WHERE id=?", (dep_id,))
+                db.commit()
+                return "expired"
+            return "skip"
+        if cur == "done":
+            return "skip"
+        try:   # сверяем, что счёт именно на ту сумму и в USDT
+            ok_sum = inv.get("asset") == "USDT" and Decimal(str(inv.get("amount"))) == Decimal(usdt_str(coins))
+        except Exception:
+            ok_sum = False
+        if not ok_sum:
+            return "skip"
+        db.execute("UPDATE deposits SET status='done' WHERE id=?", (dep_id,))
+        new_bal = add_balance(uid, coins, f"deposit #{dep_id}")
+        ref_note = _ref_bonus_nolock(uid, coins)
+        db.commit()
+        who = db.execute("SELECT first_name, username FROM users WHERE user_id=?", (uid,)).fetchone() or ("", "")
+    await tg("sendMessage", chat_id=uid, parse_mode="HTML",
+             text=f"✅ <b>Оплата получена!</b>\n\nНа счёт зачислено: <b>+{coins} {CURRENCY}</b> ({usdt_str(coins)} USDT)\n"
+                  f"Ваш баланс: <b>{new_bal} {CURRENCY}</b>\n\nУдачной игры! 🍀",
+             reply_markup={"inline_keyboard": [[{"text": "🎰 Играть", "web_app": {"url": BASE_URL}}]]})
+    await tg("sendMessage", chat_id=OWNER_ID,
+             text=f"💰 Пополнение #{dep_id}: {usdt_str(coins)} USDT = {coins} {CURRENCY}\n"
+                  f"От: {who[0] or '—'} @{who[1] or '—'} (id {uid})")
+    if ref_note:
+        await tg("sendMessage", chat_id=ref_note[0],
+                 text=f"🎉 {ref_note[1]} пополнил счёт — вам начислен бонус {REF_BONUS_USDT} USDT "
+                      f"(+{REF_BONUS_COINS} {CURRENCY})!\nБаланс: {ref_note[2]} {CURRENCY}")
+    return "done"
+
+
+async def poll_invoices(ids: list):
+    """Спрашиваем у Crypto Pay статус счетов и обрабатываем оплаченные/просроченные."""
+    if not ids or not CRYPTO_TOKEN:
+        return
+    res = await crypto("getInvoices", invoice_ids=",".join(str(i) for i in ids), count=100)
+    for inv in (res.get("items") if isinstance(res, dict) else res) or []:
+        await settle_invoice(inv)
+
+
+async def deposit_poller():
+    """Подстраховка на случай, если вебхук не настроен или потерялся: раз в ~10 секунд проверяем ожидающие счета."""
+    while True:
+        try:
+            await asyncio.sleep(10)
+            with db_lock:
+                ids = [r[0] for r in db.execute(
+                    "SELECT invoice_id FROM deposits WHERE status='pending' AND invoice_id IS NOT NULL AND ts>? "
+                    "ORDER BY ts DESC LIMIT 100", (time.time() - 2 * 24 * 3600,)).fetchall()]
+            await poll_invoices(ids)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print("deposit_poller:", e)
+
+
 @app.post("/api/deposit/create")
 async def deposit_create(req: Request):
     body, user = await body_user(req)
@@ -1156,11 +1271,13 @@ async def deposit_create(req: Request):
         return JSONResponse({"error": "Введите количество монет — целое число"}, status_code=400)
     if amount < MIN_DEPOSIT or amount > MAX_DEPOSIT:
         return JSONResponse({"error": f"От {MIN_DEPOSIT} до {MAX_DEPOSIT} монет"}, status_code=400)
+    if not CRYPTO_TOKEN:
+        return JSONResponse({"error": "Оплата временно недоступна, попробуйте позже"}, status_code=503)
     with db_lock:
         if is_banned(uid):
             return BANNED_RESP()
         recent = db.execute(
-            "SELECT COUNT(*) FROM deposits WHERE user_id=? AND status='new' AND ts>?", (uid, time.time() - 3600)
+            "SELECT COUNT(*) FROM deposits WHERE user_id=? AND ts>?", (uid, time.time() - 3600)
         ).fetchone()[0]
         if recent >= 10:
             return JSONResponse({"error": "Слишком много заявок, попробуйте позже"}, status_code=429)
@@ -1169,12 +1286,32 @@ async def deposit_create(req: Request):
         )
         db.commit()
         dep_id = cur.lastrowid
-    return {"id": dep_id, "amount": amount, "usdt": usdt_str(amount), "currency": "USDT",
-            "network": DEPOSIT_NETWORK, "wallet": DEPOSIT_WALLET}
+    usdt = usdt_str(amount)
+    params = dict(asset="USDT", amount=usdt, description=f"Пополнение: {amount} монет",
+                  payload=f"dep:{dep_id}:{uid}", expires_in=INVOICE_TTL,
+                  allow_comments=False, allow_anonymous=False)
+    bot = await ensure_bot_username()
+    if bot:   # после оплаты в Crypto Bot появится кнопка «Вернуться в бота»
+        params.update(paid_btn_name="openBot", paid_btn_url=f"https://t.me/{bot}")
+    try:
+        inv = await crypto("createInvoice", **params)
+    except Exception as e:
+        print("createInvoice:", e)
+        with db_lock:
+            db.execute("UPDATE deposits SET status='failed' WHERE id=?", (dep_id,))
+            db.commit()
+        return JSONResponse({"error": "Не удалось создать счёт, попробуйте через минуту"}, status_code=502)
+    url = inv.get("mini_app_invoice_url") or inv.get("bot_invoice_url") or inv.get("pay_url") or ""
+    with db_lock:
+        db.execute("UPDATE deposits SET status='pending', invoice_id=?, pay_url=? WHERE id=?",
+                   (inv["invoice_id"], url, dep_id))
+        db.commit()
+    return {"id": dep_id, "amount": amount, "usdt": usdt, "currency": "USDT", "pay_url": url, "ttl": INVOICE_TTL}
 
 
-@app.post("/api/deposit/paid")
-async def deposit_paid(req: Request):
+@app.post("/api/deposit/status")
+async def deposit_status(req: Request):
+    """Приложение спрашивает, оплачен ли счёт. Заодно сами проверяем его в Crypto Pay."""
     body, user = await body_user(req)
     uid = user["id"]
     try:
@@ -1182,15 +1319,35 @@ async def deposit_paid(req: Request):
     except (TypeError, ValueError):
         return JSONResponse({"error": "Ошибка"}, status_code=400)
     with db_lock:
-        row = db.execute("SELECT amount, status FROM deposits WHERE id=? AND user_id=?", (dep_id, uid)).fetchone()
-        if not row or row[1] != "new":
-            return JSONResponse({"error": "Заявка не найдена или уже отправлена"}, status_code=404)
-        db.execute("UPDATE deposits SET status='claimed' WHERE id=?", (dep_id,))
-        db.commit()
-    who = f"{user.get('first_name', '')} @{user.get('username', '—')} (id {uid})"
-    await tg("sendMessage", chat_id=OWNER_ID,
-             text=f"💸 Заявка на пополнение #{dep_id}\nОт: {who}\nСумма: {usdt_str(row[0])} USDT ({DEPOSIT_NETWORK}) = {row[0]} {CURRENCY}\n\n"
-                  f"Проверьте поступление на кошелёк и зачислите в приложении: Админ → Обзор → Заявки на пополнение.")
+        row = db.execute("SELECT status, invoice_id FROM deposits WHERE id=? AND user_id=?", (dep_id, uid)).fetchone()
+    if not row:
+        return JSONResponse({"error": "Счёт не найден"}, status_code=404)
+    if row[0] == "pending" and row[1]:
+        try:
+            await poll_invoices([row[1]])
+        except Exception as e:
+            print("deposit_status:", e)
+    with db_lock:
+        st = db.execute("SELECT status FROM deposits WHERE id=?", (dep_id,)).fetchone()[0]
+        bal = get_balance(uid)
+    return {"status": st, "balance": bal}
+
+
+@app.post("/cryptopay/webhook")
+async def cryptopay_webhook(req: Request):
+    """Вебхук Crypto Pay (необязателен, т.к. есть опрос). Адрес: BASE_URL/cryptopay/webhook"""
+    raw = await req.body()
+    sig = req.headers.get("crypto-pay-api-signature", "")
+    key = hashlib.sha256(CRYPTO_TOKEN.encode()).digest()
+    mine = hmac.new(key, raw, hashlib.sha256).hexdigest()
+    if not CRYPTO_TOKEN or not hmac.compare_digest(mine, sig):
+        raise HTTPException(403)
+    try:
+        upd = json.loads(raw)
+    except ValueError:
+        raise HTTPException(400)
+    if upd.get("update_type") == "invoice_paid" and isinstance(upd.get("payload"), dict):
+        await settle_invoice(upd["payload"])
     return {"ok": True}
 
 
@@ -1220,21 +1377,14 @@ async def admin_deposit_ok(req: Request):
             return JSONResponse({"error": "Заявка не найдена или уже обработана"}, status_code=404)
         db.execute("UPDATE deposits SET status=? WHERE id=?", ("done" if approve else "rejected", dep_id))
         new_bal = add_balance(row[0], row[1], f"deposit #{dep_id}") if approve else None
-        ref_note = None
-        if approve and row[1] >= REF_MIN_COINS:            # первый депозит друга от 5 USDT -> бонус пригласившему
-            ref = db.execute("SELECT referrer_id FROM referrals WHERE user_id=? AND rewarded=0", (row[0],)).fetchone()
-            if ref:
-                db.execute("UPDATE referrals SET rewarded=1, reward_ts=? WHERE user_id=?", (time.time(), row[0]))
-                ref_bal = add_balance(ref[0], REF_BONUS_COINS, f"referral bonus (friend {row[0]})")
-                fr = db.execute("SELECT first_name FROM users WHERE user_id=?", (row[0],)).fetchone()
-                ref_note = (ref[0], (fr[0] if fr and fr[0] else "ваш друг"), ref_bal)
+        ref_note = _ref_bonus_nolock(row[0], row[1]) if approve else None
         db.commit()
     if approve:
         await tg("sendMessage", chat_id=row[0],
                  text=f"✅ Пополнение на {usdt_str(row[1])} USDT зачислено: +{row[1]} {CURRENCY}\nБаланс: {new_bal} {CURRENCY}")
     else:
         await tg("sendMessage", chat_id=row[0],
-                 text=f"❌ Заявка на пополнение #{dep_id} отклонена. Если вы оплатили — напишите нам через «Обратная связь».")
+                 text=f"❌ Заявка на пополнение #{dep_id} отклонена. Если вы оплатили — напишите нам прямо в этот чат.")
     if ref_note:
         await tg("sendMessage", chat_id=ref_note[0],
                  text=f"🎉 {ref_note[1]} пополнил счёт — вам начислен бонус {REF_BONUS_USDT} USDT "
@@ -1408,7 +1558,7 @@ async def wd_resolve(wd_id: int, action: str, reason: str = "", chat_id=None, ms
         note = (f"❌ Вывод #{wd_id} отклонён.\nПричина: {reason}\n"
                 f"Монеты ({coins} {CURRENCY}) возвращены на ваш баланс.")
     else:
-        note = f"🧊 Вывод #{wd_id} заморожен. Напишите нам через «{FEEDBACK_BTN}», чтобы уточнить детали."
+        note = f"🧊 Вывод #{wd_id} заморожен. Напишите нам прямо в этот чат, чтобы уточнить детали."
     await tg("sendMessage", chat_id=uid, text=note)
     if chat_id and msg_id and card:
         await tg("editMessageText", chat_id=chat_id, message_id=msg_id, text=card[0], parse_mode="HTML",
@@ -1452,7 +1602,7 @@ async def cashier_history(req: Request):
     _, user = await body_user(req)
     uid = user["id"]
     with db_lock:
-        deps = db.execute("SELECT amount, status, ts FROM deposits WHERE user_id=? AND status IN ('claimed','done','rejected') "
+        deps = db.execute("SELECT amount, status, ts FROM deposits WHERE user_id=? AND status IN ('claimed','done','rejected','pending','expired') "
                           "ORDER BY ts DESC LIMIT 30", (uid,)).fetchall()
         wds = db.execute("SELECT coins, usdt, status, reason, ts FROM withdrawals WHERE user_id=? ORDER BY ts DESC LIMIT 30",
                          (uid,)).fetchall()
@@ -1702,6 +1852,35 @@ async def register_referral(uid: int, ref_id: int, u: dict):
                   f"Когда он пополнит счёт от {REF_MIN_USDT} USDT, вы получите {REF_BONUS_USDT} USDT.")
 
 
+# ---------- приветствие ----------
+async def send_welcome(chat_id: int, u: dict, first_time: bool = False):
+    name = html.escape((u.get("first_name") or "друг").strip() or "друг")
+    play = {"inline_keyboard": [[{"text": "🎰 Играть", "web_app": {"url": BASE_URL}}]]}
+    if first_time:
+        text = (
+            f"🎉 <b>Добро пожаловать, {name}!</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "Ты попал в игровой клуб, где всегда есть во что поиграть:\n\n"
+            "🎰 <b>Слоты</b> — фрукты, пельмени и легендарная «Собачья банда» с бонуской\n"
+            "🃏 <b>Блэкджек</b> — обыграй дилера\n"
+            "🥟 <b>Пельмень или Тапок</b> — орёл и решка по-нашему\n"
+            "🎯 <b>Наперстки</b> и <b>крестики-нолики</b> на монеты\n"
+            "🎡 <b>Колесо фортуны</b> — бесплатная прокрутка каждые 12 часов\n\n"
+            "🎁 Есть промокоды, а за приглашённых друзей — бонусы.\n\n"
+            "Жми <b>«Играть»</b> и забирай свою удачу 🍀"
+        )
+    else:
+        with db_lock:
+            bal = f"{get_balance(u['id']):,}".replace(",", " ")
+        text = (
+            f"👋 <b>С возвращением, {name}!</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            f"💰 Твой баланс: <b>{bal} {CURRENCY}</b>\n"
+            "\nСлоты, блэкджек и колесо фортуны уже ждут — жми <b>«Играть»</b> 🎰"
+        )
+    await tg("sendMessage", chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=play)
+
+
 # ---------- вебхук бота ----------
 @app.post("/webhook")
 async def webhook(req: Request, x_telegram_bot_api_secret_token: str = Header(None)):
@@ -1752,46 +1931,27 @@ async def handle_message(msg: dict):
         await send_backup(chat_id)
         return
 
-    if text.startswith("/start"):
-        parts = text.split(maxsplit=1)
-        payload = parts[1].strip() if len(parts) > 1 else ""
-        if payload.startswith("ref_") and payload[4:].isdigit() and not was_known:
-            await register_referral(uid, int(payload[4:]), msg["from"])
-        await tg(
-            "sendMessage",
-            chat_id=chat_id,
-            text="Добро пожаловать! 🎰 Жми «Открыть» — слоты, игры и колесо фортуны уже ждут",
-            reply_markup={
-                "inline_keyboard": [[{"text": "🎰 Открыть", "web_app": {"url": BASE_URL}}]]
-            },
-        )
-        await tg(
-            "sendMessage",
-            chat_id=chat_id,
-            text="Если что — пиши нам через кнопку ниже 👇",
-            reply_markup={"keyboard": [[{"text": FEEDBACK_BTN}]], "resize_keyboard": True},
-        )
+    if text.startswith("/start") or text in (MENU_BTN, OLD_FEEDBACK_BTN):
+        if text.startswith("/start"):
+            parts = text.split(maxsplit=1)
+            payload = parts[1].strip() if len(parts) > 1 else ""
+            if payload.startswith("ref_") and payload[4:].isdigit() and not was_known:
+                await register_referral(uid, int(payload[4:]), msg["from"])
+        await send_welcome(chat_id, msg["from"], first_time=not was_known and text.startswith("/start"))
+        if text.startswith("/start") or text == OLD_FEEDBACK_BTN:   # постоянная кнопка «Главное меню» внизу (заменяет старую «Обратная связь»)
+            await tg("sendMessage", chat_id=chat_id, text="Кнопка меню всегда под рукой 👇",
+                     reply_markup={"keyboard": [[{"text": MENU_BTN}]], "resize_keyboard": True,
+                                   "is_persistent": True})
         return
 
-    if text == FEEDBACK_BTN:
-        with db_lock:
-            db.execute("INSERT OR IGNORE INTO fb_wait VALUES(?)", (uid,))
-            db.commit()
-        await tg("sendMessage", chat_id=chat_id, text="Напишите ваше сообщение одним текстом, я передам его 👌")
-        return
-
-    with db_lock:
-        waiting = db.execute("SELECT 1 FROM fb_wait WHERE user_id=?", (uid,)).fetchone()
-    if waiting:
+    # любое другое сообщение от игрока — это обращение в поддержку: пересылаем владельцу, он отвечает reply-ем
+    if msg["chat"].get("type") == "private" and uid != OWNER_ID and text:
         u = msg["from"]
         who = f"{u.get('first_name', '')} @{u.get('username', '—')} (id {uid})"
-        sent = await tg("sendMessage", chat_id=OWNER_ID, text=f"✉️ Обратная связь от {who}:\n\n{text}")
-        with db_lock:
-            db.execute("DELETE FROM fb_wait WHERE user_id=?", (uid,))
-            if sent.get("ok"):
-                db.execute(
-                    "INSERT OR REPLACE INTO fb_map VALUES(?,?)",
-                    (sent["result"]["message_id"], uid),
-                )
-            db.commit()
-        await tg("sendMessage", chat_id=chat_id, text="Спасибо! Сообщение отправлено ✅")
+        sent = await tg("sendMessage", chat_id=OWNER_ID, text=f"✉️ Сообщение от {who}:\n\n{text}")
+        if sent.get("ok"):
+            with db_lock:
+                db.execute("INSERT OR REPLACE INTO fb_map VALUES(?,?)", (sent["result"]["message_id"], uid))
+                db.commit()
+        await tg("sendMessage", chat_id=chat_id, text="Спасибо! Сообщение передано, скоро ответим ✅",
+                 reply_markup={"inline_keyboard": [[{"text": "🎰 Играть", "web_app": {"url": BASE_URL}}]]})
