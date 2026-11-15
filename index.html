@@ -148,6 +148,19 @@
   .paytab { margin-top:12px; font-size:13px; }
   .paytab summary { cursor:pointer; opacity:.85; padding:4px 0; }
   .paytab .logrow span:first-child { white-space:nowrap; }
+  /* ---- слот «Собачья банда»: картинки, иксы, бонус ---- */
+  .sy { position:relative; }
+  .sy img { width:94%; height:94%; object-fit:cover; border-radius:9px; pointer-events:none; }
+  .mb { position:absolute; right:0; bottom:0; padding:0 5px; border-radius:8px; background:#ffd76a; color:#111; font-weight:900;
+        font-size:calc(var(--cs)*.27); line-height:1.25; box-shadow:0 0 8px #ffd76a; animation:bob 1s ease-in-out infinite; }
+  .slbonus { margin-top:10px; padding:8px 10px; text-align:center; font-weight:800; border-radius:12px; border:2px solid #ffd76a;
+             background:linear-gradient(90deg,#3a2a05,#6b4a08,#3a2a05); color:#ffe58a; text-shadow:0 0 10px #ffd76a88; }
+  .bn-card { position:relative; width:min(92vw,440px); text-align:center; animation:bnin .7s cubic-bezier(.2,1.25,.3,1); }
+  .bn-card img { width:100%; display:block; border-radius:20px; border:3px solid #ffd76a; box-shadow:0 0 50px #ffd76acc, 0 0 120px #ff2fa066; }
+  .bn-sub { margin-top:12px; font-size:16px; font-weight:800; color:#ffe58a; text-shadow:0 2px 8px #000; }
+  @keyframes bnin { from { opacity:0; transform:scale(.2) rotate(-6deg); filter:blur(10px); } to { opacity:1; transform:none; filter:none; } }
+  #bn_ov.on .bn-card img { animation:bnpulse 1.2s ease-in-out .7s infinite alternate; }
+  @keyframes bnpulse { to { box-shadow:0 0 70px #ffd76a, 0 0 150px #ff2fa099; } }
 </style>
 </head>
 <body>
@@ -224,6 +237,7 @@
   <div class="card" id="gc5" style="display:none">
     <h2>🎰 Слоты</h2>
     <div class="slpick" id="sl_pick"></div>
+    <div class="slbonus" id="sl_bonus" style="display:none"></div>
     <div class="machine" id="machine"></div>
     <div class="slwin" id="sl_win"></div>
     <input id="slbet" type="number" inputmode="numeric" min="1" placeholder="Ставка" value="10">
@@ -243,7 +257,7 @@
 </div>
 
 <div id="p3" class="page">
-  <div class="nav sub g" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div><div id="a4">✨ Окно</div><div id="a5" style="display:none">🛡 Админы</div></div>
+  <div class="nav sub g" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div><div id="a4">✨ Окно</div><div id="a5" style="display:none">🛡 Админы</div><div id="a6" style="display:none">🍀 Удача</div></div>
 
   <div id="ap1" style="width:100%;display:flex;flex-direction:column;align-items:center">
     <div class="card"><h2>📊 Статистика</h2><div id="stats">…</div><div class="top" id="top"></div></div>
@@ -312,6 +326,19 @@
     </div>
     <div class="card"><h2>👥 Текущие админы</h2><div id="adm_list">…</div></div>
   </div>
+
+  <div id="ap6" style="width:100%;display:none;flex-direction:column;align-items:center">
+    <div class="card">
+      <h2>🍀 Регулятор удачи</h2>
+      <div class="info" style="opacity:.8">Режим «щедрости»: игра делает несколько попыток и отдаёт игроку лучший исход. Работает в монетке, наперстках и слотах. Можно включить всем или одному игроку, на время или без срока.</div>
+      <div class="nav sub" id="lk_levels" style="margin-top:12px"></div>
+      <input id="lk_target" placeholder="Кому: ID или @username (пусто = всем игрокам)">
+      <input id="lk_min" type="number" inputmode="numeric" placeholder="На сколько минут (пусто = пока не отключите)">
+      <button id="lk_apply" class="pink" style="margin-top:12px">Применить</button>
+      <div class="msg" id="lk_msg"></div>
+    </div>
+    <div class="card"><h2>⚙️ Сейчас действует</h2><div id="lk_list">…</div></div>
+  </div>
 </div>
 
 <div class="ov" id="dep_ov">
@@ -352,6 +379,10 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="ov" id="bn_ov">
+  <div class="bn-card"><img src="/static/bonus.jpg" alt=""><div class="bn-sub">15 вращений · лепреконы с иксами ✨</div></div>
 </div>
 
 <div class="ov" id="pu_ov">
@@ -408,7 +439,7 @@ async function init() {
   const { data } = await api("/api/status");
   prizes = data.prizes; left = data.left; setBal(data.balance || 0);
   if (data.is_admin) { isAdmin = true; $("n3").style.display = "block"; }
-  if (data.is_owner) $("a5").style.display = "block";
+  if (data.is_owner) { $("a5").style.display = "block"; $("a6").style.display = "block"; }
   await Promise.all(prizes.map(p => new Promise(r => { p.im = new Image(); p.im.onload = p.im.onerror = r; p.im.src = p.img; })));
   draw();
   left > 0 ? startTimer() : (btn.disabled = false);
@@ -555,8 +586,8 @@ async function bjLoad() { const { status, data } = await post("/api/bj/state"); 
 // ---------- админка ----------
 const fmtTime = ts => new Date(ts*1000).toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
 const confirmTg = text => new Promise(res => tg.showConfirm ? tg.showConfirm(text, res) : res(confirm(text)));
-[1,2,3,4,5].forEach(i => $("a"+i).onclick = () => {
-  [1,2,3,4,5].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
+[1,2,3,4,5,6].forEach(i => $("a"+i).onclick = () => {
+  [1,2,3,4,5,6].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
 });
 async function loadStats() {
   const { status, data } = await post("/api/admin/stats");
@@ -732,13 +763,26 @@ let SL = null, slKey = "fruit", slBusy = false, slCS = 70, slReels = [];
 const slTurbo = {};                                   // режим «Турбо» запоминается отдельно для каждого слота
 try { Object.assign(slTurbo, JSON.parse(localStorage.getItem("slTurbo") || "{}")); } catch (e) {}
 const rnd = a => a[Math.floor(Math.random() * a.length)];
-const mkSym = s => { const d = document.createElement("div"); d.className = "sy"; d.textContent = s; return d; };
+// символ: эмодзи или картинка ("@pug" -> /static/pug.png); m > 1 — бейдж икса у лепрекона
+const mkSym = (s, m) => {
+  const d = document.createElement("div"); d.className = "sy"; d.dataset.s = s; d.dataset.m = m || 1;
+  if (s[0] === "@") { const im = document.createElement("img"); im.src = "/static/" + s.slice(1) + ".png"; im.alt = ""; d.appendChild(im); }
+  else d.textContent = s;
+  if (m > 1) { const b = document.createElement("span"); b.className = "mb"; b.textContent = "x" + m; d.appendChild(b); }
+  return d;
+};
+const slLabel = s => {
+  if (s[0] !== "@") return document.createTextNode(s);
+  const i = document.createElement("img"); i.src = "/static/" + s.slice(1) + ".png";
+  i.style.cssText = "width:28px;height:28px;vertical-align:middle;border-radius:7px;object-fit:cover"; return i;
+};
 
 async function slLoad() {
   if (SL) return;
   const { status, data } = await post("/api/slot/config");
   if (status !== 200) { $("slmsg").textContent = "Не удалось загрузить слоты, попробуйте позже"; return; }
   SL = data.slots;
+  ["pug", "beag", "rott", "lep"].forEach(n => { new Image().src = "/static/" + n + ".png"; }); new Image().src = "/static/bonus.jpg";
   Object.keys(SL).forEach(k => {
     const c = SL[k], d = document.createElement("div"); d.className = "slchip"; d.dataset.k = k;
     const e = document.createElement("span"); e.textContent = c.emoji;
@@ -769,7 +813,7 @@ function slSelect(k) {
   const pt = $("sl_pay"); pt.innerHTML = "";
   c.symbols.forEach(sym => {
     const row = document.createElement("div"); row.className = "logrow";
-    const a = document.createElement("span"); a.textContent = sym + (sym === c.wild ? " (дикий)" : "");
+    const a = document.createElement("span"); a.append(slLabel(sym)); if (sym === c.wild) a.append(" (дикий)");
     const b = document.createElement("span");
     b.textContent = Object.keys(c.pay[sym]).map(Number).sort((x, y) => x - y).map(n => `${n} шт — x${c.pay[sym][n]}`).join(" · ");
     row.append(a, b); pt.appendChild(row);
@@ -777,6 +821,11 @@ function slSelect(k) {
   const note = document.createElement("div"); note.style.cssText = "opacity:.6;margin-top:6px";
   note.textContent = "x — множитель ставки на одну линию.";
   pt.appendChild(note);
+  if (c.bonus) {
+    const bn = document.createElement("div"); bn.style.cssText = "margin-top:8px;line-height:1.5";
+    bn.textContent = `🎁 Бонус: собака на 1-м, 3-м и 5-м барабанах → ${c.bonus_spins} вращений. В бонусе лепреконы падают часто и несут иксы (${c.mults.map(m => "x" + m).join(", ")}). Иксы лепреконов на линии перемножаются.`;
+    pt.appendChild(bn);
+  }
 }
 
 function slTurboUI() { $("sl_turbo").classList.toggle("on", !!slTurbo[slKey]); $("sl_turbo").textContent = slTurbo[slKey] ? "⚡ Турбо: ВКЛ" : "⚡ Турбо"; }
@@ -786,22 +835,34 @@ $("sl_turbo").onclick = () => {
   try { localStorage.setItem("slTurbo", JSON.stringify(slTurbo)); } catch (e) {}
 };
 
-function slAnimate(c, grid, turbo) {
+function slAnimate(c, grid, turbo, mults) {
   return Promise.all(slReels.map((reel, ci) => new Promise(done => {
-    const rs = reel.firstChild, cur = [...rs.children].map(x => x.textContent);
+    const mOf = ri => (mults ? mults[ri][ci] : 1);
+    const rs = reel.firstChild, cur = [...rs.children].map(x => [x.dataset.s, +x.dataset.m || 1]);
     const n = turbo ? 5 : 14 + ci * 6;                              // сколько символов «пролетит» мимо
-    const col = [...cur, ...Array.from({ length: n }, () => rnd(c.symbols)), ...grid.map(r => r[ci])];
+    const col = [...cur, ...Array.from({ length: n }, () => [rnd(c.symbols), 1]), ...grid.map((r, ri) => [r[ci], mOf(ri)])];
     rs.style.transition = "none"; rs.style.transform = "translateY(0)";
-    rs.replaceChildren(...col.map(mkSym)); reel.classList.add("blur");
+    rs.replaceChildren(...col.map(([s, m]) => mkSym(s, m))); reel.classList.add("blur");
     void rs.offsetHeight;
     const dur = turbo ? 0.3 + ci * 0.07 : 1.0 + ci * 0.3;
     rs.style.transition = `transform ${dur}s cubic-bezier(.22,.8,.25,1)`;
     rs.style.transform = `translateY(${-(c.rows + n) * slCS}px)`;
     setTimeout(() => {
-      rs.style.transition = "none"; rs.replaceChildren(...grid.map(r => mkSym(r[ci]))); rs.style.transform = "translateY(0)";
+      rs.style.transition = "none"; rs.replaceChildren(...grid.map((r, ri) => mkSym(r[ci], mOf(ri)))); rs.style.transform = "translateY(0)";
       reel.classList.remove("blur"); done();
     }, dur * 1000 + 40);
   })));
+}
+
+// фото с тремя собаками по центру экрана («БОНУСНЫЙ РАУНД»); закрывается само или по касанию
+function slBonusIntro() {
+  return new Promise(res => {
+    const ov = $("bn_ov"); ov.classList.add("on");
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("success");
+    let done = false;
+    const close = () => { if (done) return; done = true; ov.classList.remove("on"); ov.onclick = null; setTimeout(res, 250); };
+    ov.onclick = close; setTimeout(close, 3800);
+  });
 }
 
 $("sl_spin").onclick = async () => {
@@ -809,7 +870,7 @@ $("sl_spin").onclick = async () => {
   const c = SL[slKey], key = slKey, bet = parseInt($("slbet").value, 10), msg = $("slmsg"), win = $("sl_win");
   if (!bet || bet < c.min_bet) { msg.textContent = `Минимальная ставка в этом слоте: ${c.min_bet} 🪙`; return; }
   if (bet > (window._bal || 0)) { msg.textContent = "Недостаточно монет 🪙"; return; }
-  slBusy = true; $("sl_spin").disabled = true; msg.textContent = ""; win.textContent = ""; win.className = "slwin";
+  slBusy = true; $("sl_spin").disabled = true; msg.textContent = ""; win.textContent = ""; win.className = "slwin"; $("sl_bonus").style.display = "none";
   slReels.forEach(r => [...r.firstChild.children].forEach(x => x.classList.remove("hit")));
   const { status, data } = await post("/api/slot/spin", { slot: key, bet });
   if (status !== 200) {
@@ -818,9 +879,38 @@ $("sl_spin").onclick = async () => {
     if (data.balance !== undefined) setBal(data.balance);
     slBusy = false; $("sl_spin").disabled = false; return;
   }
-  await slAnimate(c, data.grid, !!slTurbo[key]);
+  const turbo = !!slTurbo[key], wait = ms => new Promise(r => setTimeout(r, ms));
+  const hitWins = ws => ws.forEach(w => w.cells.forEach(([r, ci]) => slReels[ci].firstChild.children[r].classList.add("hit")));
+  const clearHits = () => slReels.forEach(r => [...r.firstChild.children].forEach(x => x.classList.remove("hit")));
+  await slAnimate(c, data.grid, turbo, data.mults);
+  if (data.bonus) {                                   // ===== бонусный раунд =====
+    const N = data.bonus.spins.length, bb = $("sl_bonus"), balStart = data.balance - data.payout;   // баланс без выплат за этот запуск
+    setBal(balStart + data.base_payout); hitWins(data.wins);
+    if (data.base_payout > 0) win.textContent = `+${data.base_payout} 🪙`;
+    await slBonusIntro();
+    bb.style.display = "block"; let acc = 0;
+    for (let i = 0; i < N; i++) {
+      const sp = data.bonus.spins[i];
+      bb.textContent = `🎁 БОНУСНЫЙ РАУНД ${i + 1}/${N} · выиграно ${acc.toLocaleString("ru-RU")} 🪙`;
+      clearHits(); win.textContent = ""; win.className = "slwin";
+      await slAnimate(c, sp.grid, turbo, sp.mults);
+      hitWins(sp.wins); acc += sp.win;
+      const bm = sp.wins.reduce((m, w) => Math.max(m, w.mult || 1), 1);
+      if (sp.win) { win.textContent = `+${sp.win} 🪙` + (bm > 1 ? ` · икс x${bm}` : ""); if (bm > 1) win.classList.add("big"); }
+      bb.textContent = `🎁 БОНУСНЫЙ РАУНД ${i + 1}/${N} · выиграно ${acc.toLocaleString("ru-RU")} 🪙`;
+      setBal(balStart + data.base_payout + acc);
+      tg.HapticFeedback && sp.win && tg.HapticFeedback.impactOccurred(bm > 1 ? "heavy" : "light");
+      await wait(sp.win ? (turbo ? 450 : 1100) : (turbo ? 120 : 450));
+    }
+    setBal(data.balance);
+    bb.textContent = `🎁 Бонус завершён: +${data.bonus.total.toLocaleString("ru-RU")} 🪙`;
+    win.className = "slwin big"; win.textContent = `🏆 ИТОГО +${data.payout.toLocaleString("ru-RU")} 🪙 (x${Math.round(data.payout / bet * 10) / 10})`;
+    msg.textContent = data.payout > bet ? `Чистыми: +${(data.payout - bet).toLocaleString("ru-RU")} 🪙` : `Вернулось ${data.payout} из ${bet} 🪙`;
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(data.payout > bet ? "success" : "warning");
+    slBusy = false; $("sl_spin").disabled = false; return;
+  }
   setBal(data.balance);
-  data.wins.forEach(w => w.cells.forEach(([r, ci]) => slReels[ci].firstChild.children[r].classList.add("hit")));
+  hitWins(data.wins);
   if (data.payout > 0) {
     const x = Math.round(data.payout / bet * 10) / 10, big = data.payout >= bet * 20;
     win.textContent = `${big ? "🔥 БОЛЬШОЙ ВЫИГРЫШ! " : "🎉 "}+${data.payout} 🪙 (x${x})`;
@@ -1000,6 +1090,45 @@ async function admAct(path, target, okText) {
 $("adm_add").onclick = () => admAct("/api/admin/admins/add", $("adm_target").value.trim(), "доступ выдан");
 $("adm_del").onclick = async () => { const t = $("adm_target").value.trim(); if (t && await confirmTg("Забрать доступ к админ-панели?")) admAct("/api/admin/admins/remove", t, "доступ отозван"); };
 $("a5").addEventListener("click", loadAdmins);
+
+// ---------- админка: регулятор удачи (только владелец) ----------
+let lkLevel = 1, lkNames = ["Обычная", "Щедрая (×2)", "Очень щедрая (×3)"];
+function lkDraw() {
+  const b = $("lk_levels"); b.replaceChildren();
+  lkNames.forEach((n, i) => {
+    const d = document.createElement("div"); d.textContent = i === 0 ? "Выключить" : n; d.className = i === lkLevel ? "on" : "";
+    d.onclick = () => { lkLevel = i; lkDraw(); }; b.appendChild(d);
+  });
+}
+function lkList(items) {
+  const box = $("lk_list"); box.innerHTML = items.length ? "" : "Всё как обычно — режим удачи не включён";
+  items.forEach(it => {
+    const row = document.createElement("div"); row.className = "logrow";
+    const l = document.createElement("div"); l.textContent = it.scope === "global" ? "🌍 Все игроки" : "👤 " + (it.name || it.scope);
+    const sm = document.createElement("small"); sm.textContent = it.level_name + " · " + (it.until ? "до " + fmtTime(it.until) : "без срока"); l.appendChild(sm);
+    const x = document.createElement("button"); x.className = "mini pink"; x.textContent = "Выкл";
+    x.onclick = async () => {
+      const target = it.scope === "global" ? "" : it.scope.slice(2);
+      const { status, data } = await post("/api/admin/luck/set", { level: 0, minutes: 0, target });
+      if (status === 200) lkList(data.items);
+    };
+    row.append(l, x); box.appendChild(row);
+  });
+}
+async function loadLuck() {
+  const { status, data } = await post("/api/admin/luck");
+  if (status !== 200) return;
+  lkNames = data.levels; lkDraw(); lkList(data.items);
+}
+$("lk_apply").onclick = async () => {
+  const target = $("lk_target").value.trim(), minutes = parseInt($("lk_min").value, 10) || 0;
+  const who = target || "ВСЕХ игроков";
+  if (!await confirmTg(lkLevel === 0 ? `Выключить режим удачи для: ${who}?` : `Включить «${lkNames[lkLevel]}» для: ${who}${minutes ? ` на ${minutes} мин` : " без срока"}?`)) return;
+  const { status, data } = await post("/api/admin/luck/set", { level: lkLevel, minutes, target });
+  $("lk_msg").textContent = status === 200 ? `✅ ${data.name}: ${data.level === 0 ? "режим выключен" : data.level_name}` : "❌ " + (data.error || "Ошибка");
+  if (status === 200) lkList(data.items);
+};
+$("a6").addEventListener("click", loadLuck);
 
 tttLoad();
 pollPopups();

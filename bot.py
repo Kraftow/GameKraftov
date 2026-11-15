@@ -97,6 +97,7 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS withdrawals(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, ts REAL, coins INTEGER, usdt TEXT, wallet TEXT, status TEXT, reason TEXT);
         CREATE TABLE IF NOT EXISTS admin_wait(owner_id INTEGER PRIMARY KEY, wd_id INTEGER, card_msg_id INTEGER);
         CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS luck(scope TEXT PRIMARY KEY, level INTEGER NOT NULL, until REAL);
         """
     )
     db.commit()
@@ -210,6 +211,23 @@ def is_admin(uid: int) -> bool:
     return uid == OWNER_ID or db.execute("SELECT 1 FROM admins WHERE user_id=?", (uid,)).fetchone() is not None
 
 
+# ---------- регулятор удачи («щедрый режим») ----------
+# Уровень задаёт, сколько раз игра «бросает кубик» и отдаёт игроку лучший исход.
+# 0 — обычные шансы, 1 — лучший из 2 попыток, 2 — лучший из 3. Режим только повышает шансы игрока.
+LUCK_NAMES = ["Обычная", "Щедрая (×2)", "Очень щедрая (×3)"]
+LUCK_TRIES = [1, 2, 3]
+
+
+def luck_tries(uid: int) -> int:
+    """Сколько попыток получит игрок. Вызывать под db_lock."""
+    rows = db.execute(
+        "SELECT level FROM luck WHERE scope IN ('global', ?) AND (until IS NULL OR until>?)",
+        (f"u:{uid}", time.time()),
+    ).fetchall()
+    lvl = max([r[0] for r in rows] + [0])
+    return LUCK_TRIES[max(0, min(lvl, len(LUCK_TRIES) - 1))]
+
+
 BANNED_RESP = lambda: JSONResponse({"error": "banned"}, status_code=403)
 
 
@@ -296,7 +314,10 @@ async def coin(req: Request):
         bal = get_balance(uid)
         if bet > bal:
             return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
-        result = secrets.choice(list(COIN_SIDES))
+        for _ in range(luck_tries(uid)):          # режим удачи: даём несколько попыток, берём выигрышную
+            result = secrets.choice(list(COIN_SIDES))
+            if result == side:
+                break
         won = result == side
         bal = add_balance(uid, bet if won else -bet, f"coin {'win' if won else 'lose'}")
     return {"result": result, "won": won, "balance": bal}
@@ -649,14 +670,19 @@ async def admin_log(req: Request):
                       for a, b, c, d, e, f in rows]}
 
 
-_IMAGES = {"clover.svg", "ace.svg", "money.svg", "sad.svg"}
+_IMAGES = {
+    "clover.svg": "image/svg+xml", "ace.svg": "image/svg+xml", "money.svg": "image/svg+xml", "sad.svg": "image/svg+xml",
+    "pug.png": "image/png", "beag.png": "image/png", "rott.png": "image/png", "lep.png": "image/png",
+    "bonus.jpg": "image/jpeg",
+}
 
 
 @app.get("/static/{name}")
 async def static_img(name: str):
     if name not in _IMAGES:
         raise HTTPException(404)
-    return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), name), media_type="image/svg+xml")
+    return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), name), media_type=_IMAGES[name],
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ---------- Крестики-нолики ----------
@@ -780,7 +806,10 @@ async def shell(req: Request):
         bal = get_balance(uid)
         if bet > bal:
             return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
-        ball = secrets.randbelow(3)                 # шарик выбирается честно и независимо от вашего выбора
+        for _ in range(luck_tries(uid)):            # режим удачи: несколько попыток, берём угаданную
+            ball = secrets.randbelow(3)
+            if ball == cup:
+                break
         won = ball == cup
         payout = bet * SHELL_MULT[0] // SHELL_MULT[1] if won else 0
         bal = add_balance(uid, payout - bet, f"shell {'win' if won else 'lose'}")
@@ -865,14 +894,94 @@ def slot_spin(cfg: dict):
     return grid, wins, total
 
 
+# ==== DOGS SLOT BEGIN ====
+# 4) «Собачья банда»: 5 барабанов × 3 ряда, 10 линий, вайлд-лепрекон.
+#    Бонус: по собаке (любой из трёх) на 1-м, 3-м и 5-м барабанах -> 15 бонусных вращений.
+#    В бонусе вайлды выпадают часто и несут иксы; иксы вайлдов на линии перемножаются.
+_sysrand = random.SystemRandom()
+DOG_SYMS = ("@pug", "@beag", "@rott")
+BONUS_SPINS = 15
+WILD_MULTS = [2, 3, 5, 10]
+WILD_MULT_W = [60, 28, 10, 2]
+LINE_MULT_CAP = 200      # потолок общего икса на одной линии
+MAX_WIN_X = 3000         # потолок выигрыша за один запуск (включая бонус): ставка × 3000
+
+_DOGS_A = {"🎾": 18, "🦴": 16, "🍖": 14, "@beag": 1, "@pug": 1, "@rott": 1, "@lep": 2}   # барабаны 1, 3, 5
+_DOGS_B = {"🎾": 14, "🦴": 12, "🍖": 10, "@beag": 2, "@pug": 2, "@rott": 1, "@lep": 3}   # барабаны 2, 4
+_DOGS_BONUS = {"🎾": 12, "🦴": 11, "🍖": 10, "@beag": 2, "@pug": 2, "@rott": 2, "@lep": 4}  # бонус: много вайлдов
+
+SLOTS["dogs"] = {
+    "name": "Собачья банда", "emoji": "🐶", "reels": 5, "rows": 3, "lines": SLOTS["pelmen"]["lines"],
+    "strips": [_strip(_DOGS_A if c % 2 == 0 else _DOGS_B, 40 + c) for c in range(5)],
+    "bstrips": [_strip(_DOGS_BONUS, 70 + c) for c in range(5)],
+    "wild": "@lep",
+    "pay": {"🎾": {3: 2, 4: 5, 5: 15}, "🦴": {3: 2, 4: 6, 5: 20}, "🍖": {3: 4, 4: 10, 5: 30},
+            "@beag": {3: 6, 4: 20, 5: 60}, "@pug": {3: 10, 4: 30, 5: 120}, "@rott": {3: 15, 4: 60, 5: 300},
+            "@lep": {3: 15, 4: 60, 5: 300}},
+    "bonus": True,
+    "info": ("5 барабанов × 3 ряда, 10 линий, выигрыш слева направо от 3 одинаковых. Лепрекон — дикий. "
+             f"Собака на 1-м, 3-м и 5-м барабанах одновременно — бонус: {BONUS_SPINS} вращений, где лепреконы "
+             "падают часто и несут иксы, а иксы на линии перемножаются!"),
+}
+
+
+def dogs_spin(cfg: dict, bonus: bool = False):
+    """Одно вращение -> (сетка, сетка иксов, выигрышные линии, сумма выплат в «ставках на линию»)."""
+    strips = cfg["bstrips"] if bonus else cfg["strips"]
+    R, W, wild = cfg["rows"], cfg["reels"], cfg["wild"]
+    grid = [[None] * W for _ in range(R)]
+    mults = [[1] * W for _ in range(R)]
+    for c in range(W):
+        s = strips[c]
+        stop = secrets.randbelow(len(s))
+        for r in range(R):
+            sym = s[(stop + r) % len(s)]
+            grid[r][c] = sym
+            if bonus and sym == wild:
+                mults[r][c] = _sysrand.choices(WILD_MULTS, weights=WILD_MULT_W)[0]
+    wins, total = [], 0
+    for li, line in enumerate(cfg["lines"]):
+        res = slot_line_pay(cfg, [grid[line[c]][c] for c in range(W)])
+        if res:
+            p, n, sym = res
+            m = 1
+            for c in range(n):
+                if grid[line[c]][c] == wild:
+                    m *= mults[line[c]][c]
+            m = min(m, LINE_MULT_CAP)
+            wins.append({"line": li, "cells": [[line[c], c] for c in range(n)], "sym": sym, "pay": p, "mult": m})
+            total += p * m
+    return grid, mults, wins, total
+
+
+def dogs_trigger(grid) -> bool:
+    return all(any(grid[r][c] in DOG_SYMS for r in range(len(grid))) for c in (0, 2, 4))
+
+
+def dogs_pick(cfg: dict, tries: int, bonus: bool = False):
+    """Режим удачи: несколько попыток, берём лучшую (старт бонуса ценится высоко)."""
+    best = None
+    for _ in range(tries):
+        sp = dogs_spin(cfg, bonus)
+        score = sp[3] + (150 if (not bonus and dogs_trigger(sp[0])) else 0)
+        if best is None or score > best[0]:
+            best = (score, sp)
+    return best[1]
+# ==== DOGS SLOT END ====
+
+
 def slot_public(key: str) -> dict:
     cfg = SLOTS[key]
     syms = sorted(cfg["pay"], key=lambda s: -max(cfg["pay"][s].values()))
-    return {
+    out = {
         "name": cfg["name"], "emoji": cfg["emoji"], "reels": cfg["reels"], "rows": cfg["rows"],
         "lines": len(cfg["lines"]), "min_bet": len(cfg["lines"]), "wild": cfg["wild"],
-        "symbols": syms, "pay": cfg["pay"], "info": cfg["info"],
+        "symbols": syms, "pay": cfg["pay"], "info": cfg["info"], "bonus": bool(cfg.get("bonus")),
     }
+    if cfg.get("bonus"):
+        out["bonus_spins"] = BONUS_SPINS
+        out["mults"] = WILD_MULTS
+    return out
 
 
 @app.post("/api/slot/config")
@@ -893,14 +1002,38 @@ async def slot_spin_api(req: Request):
         return JSONResponse({"error": "bad_bet"}, status_code=400)
     if cfg is None or bet < len(cfg["lines"]) or bet > MAX_BET:   # минимум 1 монета на линию
         return JSONResponse({"error": "bad_bet"}, status_code=400)
+    n_lines = len(cfg["lines"])
     with db_lock:  # атомарно: проверка баланса + списание/начисление
         if is_banned(uid):
             return BANNED_RESP()
         bal = get_balance(uid)
         if bet > bal:
             return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
-        grid, wins, total = slot_spin(cfg)                    # результат выбирает только сервер
-        payout = bet * total // len(cfg["lines"])
+        tries = luck_tries(uid)
+        if cfg.get("bonus"):
+            grid, mults, wins, total = dogs_pick(cfg, tries)          # результат выбирает только сервер
+            base = bet * total // n_lines
+            bonus = None
+            if dogs_trigger(grid):                                    # собаки на 1-м, 3-м и 5-м барабанах
+                spins, bonus_pay = [], 0
+                for _ in range(BONUS_SPINS):
+                    g2, m2, w2, t2 = dogs_pick(cfg, tries, bonus=True)
+                    win2 = bet * t2 // n_lines
+                    bonus_pay += win2
+                    spins.append({"grid": g2, "mults": m2, "wins": w2, "win": win2})
+                bonus_pay = min(bonus_pay, bet * MAX_WIN_X)
+                bonus = {"spins": spins, "total": bonus_pay}
+            payout = min(base + (bonus["total"] if bonus else 0), bet * MAX_WIN_X)
+            bal = add_balance(uid, payout - bet, f"slot {key} {'win' if payout else 'lose'}" + (" +bonus" if bonus else ""))
+            return {"grid": grid, "mults": mults, "wins": wins, "base_payout": base, "bonus": bonus,
+                    "payout": payout, "bet": bet, "balance": bal}
+        best = None
+        for _ in range(tries):                                        # режим удачи: берём лучший из нескольких бросков
+            sp = slot_spin(cfg)
+            if best is None or sp[2] > best[2]:
+                best = sp
+        grid, wins, total = best
+        payout = bet * total // n_lines
         bal = add_balance(uid, payout - bet, f"slot {key} {'win' if payout else 'lose'}")
     return {"grid": grid, "wins": wins, "payout": payout, "bet": bet, "balance": bal}
 
@@ -998,6 +1131,54 @@ async def body_owner(req: Request):
     if user["id"] != OWNER_ID:
         raise HTTPException(403, "owner only")
     return body, user
+
+
+# ---------- Регулятор удачи (только владелец) ----------
+def _luck_rows():
+    rows = db.execute(
+        "SELECT l.scope, l.level, l.until, u.first_name, u.username FROM luck l "
+        "LEFT JOIN users u ON ('u:' || u.user_id)=l.scope WHERE l.until IS NULL OR l.until>? ORDER BY l.scope",
+        (time.time(),),
+    ).fetchall()
+    return [{"scope": a, "level": b, "level_name": LUCK_NAMES[b], "until": c,
+             "name": (d or "") + (" @" + e if e else "")} for a, b, c, d, e in rows]
+
+
+@app.post("/api/admin/luck")
+async def luck_state(req: Request):
+    await body_owner(req)
+    with db_lock:
+        db.execute("DELETE FROM luck WHERE until IS NOT NULL AND until<=?", (time.time(),))
+        db.commit()
+        return {"levels": LUCK_NAMES, "items": _luck_rows()}
+
+
+@app.post("/api/admin/luck/set")
+async def luck_set(req: Request):
+    body, _ = await body_owner(req)
+    try:
+        level = int(body.get("level"))
+        minutes = int(body.get("minutes") or 0)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Некорректные значения"}, status_code=400)
+    if not 0 <= level < len(LUCK_NAMES) or not 0 <= minutes <= 60 * 24 * 30:
+        return JSONResponse({"error": "Уровень 0–2, время до 30 суток (0 = пока не отключите)"}, status_code=400)
+    target = str(body.get("target", "")).strip()
+    with db_lock:
+        if target:
+            row = resolve_target(target)
+            if not row:
+                return JSONResponse({"error": "Пользователь не найден"}, status_code=404)
+            scope, name = f"u:{row[0]}", row[1] or str(row[0])
+        else:
+            scope, name = "global", "все игроки"
+        if level == 0:
+            db.execute("DELETE FROM luck WHERE scope=?", (scope,))
+        else:
+            until = time.time() + minutes * 60 if minutes else None
+            db.execute("INSERT OR REPLACE INTO luck VALUES(?,?,?)", (scope, level, until))
+        db.commit()
+        return {"ok": True, "name": name, "level": level, "level_name": LUCK_NAMES[level], "items": _luck_rows()}
 
 
 @app.post("/api/admin/admins")
