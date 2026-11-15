@@ -360,6 +360,16 @@
   .prow:nth-child(odd) { background:#ffffff0a; } .prow.hit { background:#ffd76a33; color:#ffe58a; font-weight:800; }
   .t-vp { background:linear-gradient(150deg,#1b5fa8,#06203d); }
   .t-mn { background:linear-gradient(150deg,#8a1f2c,#2a0509); }
+  .t-tw { background:linear-gradient(150deg,#1d8a5a,#3b1d6e); }
+  .twrow { display:flex; align-items:center; gap:6px; margin:6px 0; }
+  .twrow > i { font-style:normal; width:22px; text-align:center; }
+  .twrow > div { display:flex; flex:1; gap:3px; }
+  .tws { flex:1; text-align:center; font-size:10px; padding:5px 0; border-radius:7px; background:#ffffff10; opacity:.55; }
+  .tws.on { opacity:1; color:#06121a; font-weight:700; }
+  .twg .tws.on { background:#2be08a; } .two .tws.on { background:#ffa43a; } .twp .tws.on { background:#b57bff; }
+  .tws.full { box-shadow:0 0 8px currentColor; }
+  .twreel { font-size:54px; text-align:center; margin:10px 0 2px; min-height:66px; }
+  .twlog { white-space:pre-line; text-align:center; min-height:40px; font-size:14px; }
 
   /* ===== минное поле ===== */
   .mstat { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; text-align:center; }
@@ -430,6 +440,7 @@
     <div class="tile t-shl" data-open="4"><div class="ic">🥤</div><div class="tt">Наперстки</div><div class="ts">Угадал — x2.7</div></div>
     <div class="tile t-vp" data-open="6"><span class="bd hot">NEW</span><div class="ic">♠️</div><div class="tt">Видео-покер</div><div class="ts">Jacks or Better · до x250</div></div>
     <div class="tile t-mn" data-open="7"><span class="bd hot">NEW</span><div class="ic">💣</div><div class="tt">Минное поле</div><div class="ts">5×5 · забирай, пока не рвануло</div></div>
+    <div class="tile t-tw" data-open="8"><span class="bd hot">NEW</span><div class="ic">🌀</div><div class="tt">Твист</div><div class="ts">3 кольца · Cashpot · до x500</div></div>
   </div>
  </div>
 </div>
@@ -546,6 +557,27 @@
     <div id="mn_act_box" style="display:none"><button id="mn_cash" class="pink">💰 Забрать выигрыш</button></div>
     <div class="msg" id="mnmsg"></div>
     <div style="opacity:.6;font-size:13px;text-align:center">Открывайте клетки: каждая безопасная 💎 увеличивает множитель. Попали на мину 💣 — ставка сгорает. Чем больше мин, тем выше множители.</div>
+  </div>
+
+  <div class="card" id="gc8" style="display:none">
+    <h2>🌀 Твист</h2>
+    <div class="mstat"><div><small>Cashpot</small><b id="tw_cash">0</b></div><div><small>Ставка</small><b id="tw_bet">—</b></div><div><small>Баланс</small><b id="tw_bal">0</b></div></div>
+    <div class="twreel" id="tw_reel">🌀</div>
+    <div class="twlog" id="tw_log"></div>
+    <div class="twrow twg"><i>🟢</i><div id="tw_g"></div></div>
+    <div class="twrow two"><i>🟠</i><div id="tw_o"></div></div>
+    <div class="twrow twp"><i>🟣</i><div id="tw_p"></div></div>
+    <div id="tw_bet_box">
+      <input id="twbet" type="number" inputmode="numeric" min="1" placeholder="Ставка за спин" value="10">
+      <div class="quick" data-for="twbet"><span data-q="10">10</span><span data-q="100">100</span><span data-q="half">½</span><span data-q="all">Все</span></div>
+      <button id="tw_start" style="margin-top:14px">Начать игру</button>
+    </div>
+    <div id="tw_act_box" style="display:none">
+      <button id="tw_spin">🎰 Спин</button>
+      <button id="tw_cashbtn" class="pink" style="margin-top:10px">💵 Забрать Cashpot</button>
+    </div>
+    <div class="msg" id="twmsg"></div>
+    <div style="opacity:.6;font-size:13px;text-align:center">Каждый спин — ставка. 🟢🟠🟣 двигают кольца и копят Cashpot, ⚫ сжигает только ставку, 🪨 откатывает кольца на шаг, 💀 Пустота обнуляет Cashpot и кольца. «Забрать» переводит Cashpot на баланс и сбрасывает кольца. Заполненное кольцо платит максимум сразу на баланс, не сбрасываясь.</div>
   </div>
 </div>
 
@@ -1086,15 +1118,16 @@ $("flip").onclick = async () => {
 };
 
 // ---------- открытие игры из меню ----------
-const GAME_TITLES = { 1:"🥟 Пельмень / Тапок", 2:"🃏 Блэкджек", 3:"❌⭕ Крестики-нолики", 4:"🥤 Наперстки", 5:"🎰 Слоты", 6:"♠️ Видео-покер", 7:"💣 Минное поле" };
+const GAME_TITLES = { 1:"🥟 Пельмень / Тапок", 2:"🃏 Блэкджек", 3:"❌⭕ Крестики-нолики", 4:"🥤 Наперстки", 5:"🎰 Слоты", 6:"♠️ Видео-покер", 7:"💣 Минное поле", 8:"🌀 Твист" };
 function openGame(n, slotKey) {
   showPage(2);
-  [1,2,3,4,5,6,7].forEach(i => $("gc"+i).style.display = i===n ? "block" : "none");
+  [1,2,3,4,5,6,7,8].forEach(i => $("gc"+i).style.display = i===n ? "block" : "none");
   $("gtitle").textContent = GAME_TITLES[n];
   if (n===2) bjLoad();
   if (n===3) tttLoad();
   if (n===6) vpLoad();
   if (n===7) mnLoad();
+  if (n===8) twLoad();
   if (n===5) { if (slotKey) slKey = slotKey; slLoad().then(() => slSelect(slKey)); renderPacks(); }
 }
 document.querySelectorAll("[data-open]").forEach(el => el.onclick = () => openGame(+el.dataset.open, el.dataset.slot));
@@ -2246,6 +2279,63 @@ $("mn_cash").onclick = async () => {
   if (mnBusy || !mnState || !mnState.active || !mnState.opened.length) return;
   mnBusy = true; const { status, data } = await post("/api/mines/cash"); mnBusy = false;
   status === 200 ? mnRender(data) : mnErr(status, data);
+};
+
+// ======================= ТВИСТ =======================
+let twState = null, twBusy = false, twCfg = null;
+const TW_ICON = { green: "🟢", orange: "🟠", purple: "🟣", stone: "🪨", anchor: "⚫", void: "💀" };
+function twTrack(id, labels, n, full) {
+  const box = $(id); box.replaceChildren();
+  labels.forEach((l, i) => { const s = document.createElement("span"); s.className = "tws" + (i < n ? " on" : "") + (full ? " full" : ""); s.textContent = l; box.appendChild(s); });
+}
+function twDraw(st) {
+  if (st.gl) twCfg = st;
+  const c = twCfg || { gl: [], ol: [], pl: 6 };
+  const g = st.g || 0, o = st.o || 0, p = st.p || 0;
+  twTrack("tw_g", c.gl.map(x => x + "x"), g, g >= c.gl.length);
+  twTrack("tw_o", c.ol.map(x => x + "x"), o, o >= c.ol.length);
+  twTrack("tw_p", Array.from({ length: c.pl }, (_, i) => i + 1 === c.pl ? "🎡" : "•"), p, false);
+}
+function twRender(st) {
+  twState = st; setBal(st.balance); $("tw_bal").textContent = nf(st.balance);
+  twDraw(st);
+  $("tw_cash").textContent = nf(st.cash || 0); $("tw_bet").textContent = st.active ? nf(st.bet) : "—";
+  $("tw_bet_box").style.display = st.active ? "none" : "block"; $("tw_act_box").style.display = st.active ? "block" : "none";
+  $("tw_cashbtn").textContent = st.active ? `💵 Забрать ${nf(st.cash || 0)} 🪙 и сбросить кольца` : "";
+  if (st.last) {
+    $("tw_reel").textContent = TW_ICON[st.last.out] || "🌀"; $("tw_log").textContent = st.last.log.join("\n");
+    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(st.last.out === "void" ? "error" : st.last.win ? "success" : "warning");
+  }
+}
+function twErr(status, data) {
+  if (data.balance !== undefined) setBal(data.balance);
+  $("twmsg").textContent = data.error === "banned" ? "Вам закрыт доступ к играм 🚫" : data.error === "no_money" ? "Недостаточно монет 🪙"
+    : data.error === "already_active" ? "У вас уже идёт игра" : "Ошибка, попробуйте позже";
+  if (["already_active", "no_game"].includes(data.error)) twLoad();
+}
+async function twLoad() {
+  const { status, data } = await post("/api/twist/state");
+  if (status === 200) { $("twmsg").textContent = ""; if (!data.active) { $("tw_reel").textContent = "🌀"; $("tw_log").textContent = ""; } twRender(data); }
+}
+$("tw_start").onclick = async () => {
+  if (twBusy) return; const bet = parseInt($("twbet").value, 10);
+  if (!bet || bet < 1) { $("twmsg").textContent = "Введи ставку"; return; }
+  if (bet > (window._bal || 0)) { $("twmsg").textContent = "Недостаточно монет 🪙"; return; }
+  twBusy = true; const { status, data } = await post("/api/twist/start", { bet }); twBusy = false;
+  if (status === 200) { $("twmsg").textContent = ""; $("tw_log").textContent = ""; $("tw_reel").textContent = "🌀"; twRender(data); } else twErr(status, data);
+};
+$("tw_spin").onclick = async () => {
+  if (twBusy || !twState || !twState.active) return; twBusy = true;
+  $("tw_reel").textContent = "🌀";
+  const { status, data } = await post("/api/twist/spin"); twBusy = false;
+  status === 200 ? (twRender(data), $("twmsg").textContent = "") : twErr(status, data);
+};
+$("tw_cashbtn").onclick = async () => {
+  if (twBusy || !twState || !twState.active) return;
+  if (!twState.cash && (twState.g || twState.o || twState.p) && !confirm("Кольца будут сброшены. Закрыть игру?")) return;
+  twBusy = true; const { status, data } = await post("/api/twist/cash"); twBusy = false;
+  if (status === 200) { twRender(data); $("tw_reel").textContent = "💵"; $("tw_log").textContent = "";
+    $("twmsg").textContent = data.payout ? `🎉 Забрали ${nf(data.payout)} 🪙` : "Игра закрыта"; } else twErr(status, data);
 };
 mnBuild(); vpPay(null);
 

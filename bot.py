@@ -146,6 +146,7 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS daily(user_id INTEGER PRIMARY KEY, streak INTEGER NOT NULL DEFAULT 0, last_day INTEGER, claims INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS vp(user_id INTEGER PRIMARY KEY, deck TEXT, hand TEXT, bet INTEGER);
         CREATE TABLE IF NOT EXISTS mines(user_id INTEGER PRIMARY KEY, bet INTEGER, mcount INTEGER, opened TEXT);
+        CREATE TABLE IF NOT EXISTS twist(user_id INTEGER PRIMARY KEY, bet INTEGER NOT NULL, g INTEGER NOT NULL DEFAULT 0, o INTEGER NOT NULL DEFAULT 0, p INTEGER NOT NULL DEFAULT 0, cash INTEGER NOT NULL DEFAULT 0);
         """
     )
     try:
@@ -2394,8 +2395,8 @@ def _mail_hash(uid: int, email: str, code: str) -> str:
 
 
 _WIN_SQL = ("(reason='coin win' OR reason='shell win' OR reason LIKE '%slot %win%' "
-            "OR reason IN ('bj win','bj blackjack','ttt win','vp win','mines cashout'))")
-_ROUND_SQL = ("(reason IN ('bj bet','ttt bet','vp bet','mines bet') OR reason LIKE 'coin %' "
+            "OR reason IN ('bj win','bj blackjack','ttt win','vp win','mines cashout','twist win'))")
+_ROUND_SQL = ("(reason IN ('bj bet','ttt bet','vp bet','mines bet','twist bet') OR reason LIKE 'coin %' "
               "OR reason LIKE 'shell %' OR reason LIKE '%slot %')")
 
 
@@ -2862,6 +2863,148 @@ async def mines_cashout(req: Request):
         if not g["opened"]:
             return JSONResponse({"error": "open_first"}, status_code=400)
         return mines_cash(uid, g)
+
+
+# ---------- Твист (накопительное колесо с тремя кольцами) ----------
+# Множители в десятых долях ставки. Шансы подобраны расчётом: при ИДЕАЛЬНОЙ стратегии (оптимальная остановка)
+# RTP ≈ 94%, у обычного игрока ниже. Не повышайте шансы зелёных/оранжевых/фиолетовых и не снижайте «Пустоту»
+# без пересчёта — игра с накоплением очень чувствительна: при void 5% RTP уже > 100%.
+TW_GREEN = [16, 20, 25, 30, 40, 50, 60, 75]       # внешнее кольцо: 1.6x … 7.5x
+TW_ORANGE = [25, 35, 50, 70, 100, 140, 210]       # среднее кольцо: 2.5x … 21x
+TW_PURPLE = 6                                      # шагов до бонусного колеса
+TW_WHEEL = [100, 150, 200, 250, 300, 400, 500]    # сектора колеса (равные шансы)
+TW_JP_SMALL, TW_JP_MED = 30, 100                   # Малый / Средний джекпот (× ставка)
+TW_OUT = ["green", "orange", "purple", "stone", "anchor", "void"]
+TW_WEIGHTS = [250, 130, 70, 110, 382, 58]          # из 1000
+TW_RANK = {"purple": 5, "orange": 4, "green": 3, "anchor": 2, "stone": 1, "void": 0}   # для режима удачи
+
+
+def tw_load(uid: int):
+    row = db.execute("SELECT bet, g, o, p, cash FROM twist WHERE user_id=?", (uid,)).fetchone()
+    return dict(zip(("bet", "g", "o", "p", "cash"), row)) if row else None
+
+
+def tw_save(uid: int, s: dict):
+    db.execute("UPDATE twist SET g=?, o=?, p=?, cash=? WHERE user_id=?", (s["g"], s["o"], s["p"], s["cash"], uid))
+
+
+def tw_view(uid: int, s: dict, last=None) -> dict:
+    return {"active": True, "bet": s["bet"], "g": s["g"], "o": s["o"], "p": s["p"], "cash": s["cash"],
+            "gl": [x / 10 for x in TW_GREEN], "ol": [x / 10 for x in TW_ORANGE], "pl": TW_PURPLE,
+            "last": last, "balance": get_balance(uid)}
+
+
+@app.post("/api/twist/state")
+async def twist_state(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        s = tw_load(uid)
+        base = {"gl": [x / 10 for x in TW_GREEN], "ol": [x / 10 for x in TW_ORANGE], "pl": TW_PURPLE}
+        return tw_view(uid, s) if s else {"active": False, "balance": get_balance(uid), **base}
+
+
+@app.post("/api/twist/start")
+async def twist_start(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        bet = int(body.get("bet"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    if bet < 1 or bet > MAX_BET:
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
+        if tw_load(uid):
+            return JSONResponse({"error": "already_active"}, status_code=409)
+        if bet > get_balance(uid):
+            return JSONResponse({"error": "no_money", "balance": get_balance(uid)}, status_code=400)
+        db.execute("INSERT OR REPLACE INTO twist VALUES(?,?,0,0,0,0)", (uid, bet))   # ставка списывается за каждый спин
+        db.commit()
+        return tw_view(uid, tw_load(uid))
+
+
+@app.post("/api/twist/spin")
+async def twist_spin(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        s = tw_load(uid)
+        if not s:
+            return JSONResponse({"error": "no_game"}, status_code=409)
+        bet = s["bet"]
+        if bet > get_balance(uid):
+            return JSONResponse({"error": "no_money", "balance": get_balance(uid)}, status_code=400)
+        wager_play(uid, bet)
+        add_balance(uid, -bet, "twist bet")
+        rolls = random.SystemRandom().choices(TW_OUT, TW_WEIGHTS, k=luck_tries(uid))
+        out = max(rolls, key=lambda r: TW_RANK[r])            # режим удачи: лучший из N бросков
+        win, log, wheel = 0, [], None
+        if out in ("green", "orange"):
+            lad, key, jp, jp_name = (TW_GREEN, "g", TW_JP_SMALL, "Малый") if out == "green" else (TW_ORANGE, "o", TW_JP_MED, "Средний")
+            i = s[key]
+            if i >= len(lad):                                  # кольцо заполнено → мгновенная выплата максимума
+                win += bet * lad[-1] // 10
+                log.append(f"Кольцо заполнено: +{bet * lad[-1] // 10} 🪙 сразу на баланс")
+            else:
+                add = bet * lad[i] // 10
+                s["cash"] += add
+                s[key] = i + 1
+                log.append(f"Шаг {i + 1}/{len(lad)}: +{add} 🪙 в Cashpot (x{lad[i] / 10:g})")
+                if i + 1 == len(lad):
+                    win += bet * jp
+                    log.append(f"🎉 {jp_name} джекпот: +{bet * jp} 🪙!")
+        elif out == "purple":
+            s["p"] += 1
+            log.append(f"Шаг {s['p']}/{TW_PURPLE}")
+            if s["p"] >= TW_PURPLE:
+                wheel = random.SystemRandom().choice(TW_WHEEL)
+                win += bet * wheel
+                s["p"] = 0
+                log.append(f"🎡 Бонусное колесо: x{wheel} → +{bet * wheel} 🪙!")
+        elif out == "stone":
+            if s["g"] < len(TW_GREEN):
+                s["g"] = max(0, s["g"] - 1)
+            if s["o"] < len(TW_ORANGE):
+                s["o"] = max(0, s["o"] - 1)
+            s["p"] = max(0, s["p"] - 1)
+            log.append("Каменный токен: откат на 1 шаг на незаполненных кольцах")
+        elif out == "anchor":
+            log.append("Тёмный камень: ставка проиграна, прогресс сохранён")
+        else:
+            lost = s["cash"]
+            s["cash"] = s["g"] = s["o"] = s["p"] = 0
+            log.append(f"Пустота: Cashpot ({lost} 🪙) и все кольца обнулены")
+        win = min(win, bet * MAX_WIN_X)
+        if win:
+            add_balance(uid, win, "twist win")
+        tw_save(uid, s)
+        db.commit()
+        return tw_view(uid, s, {"out": out, "win": win, "log": log, "wheel": wheel})
+
+
+@app.post("/api/twist/cash")
+async def twist_cash(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        s = tw_load(uid)
+        if not s:
+            return JSONResponse({"error": "no_game"}, status_code=409)
+        payout = s["cash"]
+        if payout:
+            add_balance(uid, payout, "twist win")
+        db.execute("DELETE FROM twist WHERE user_id=?", (uid,))     # «Чистый лист»: кольца сброшены, сессия закрыта
+        db.commit()
+        return {"active": False, "payout": payout, "bet": s["bet"], "balance": get_balance(uid),
+                "gl": [x / 10 for x in TW_GREEN], "ol": [x / 10 for x in TW_ORANGE], "pl": TW_PURPLE}
 
 
 # ---------- приветствие ----------
