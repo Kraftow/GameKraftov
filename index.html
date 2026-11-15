@@ -303,6 +303,78 @@
   .wof { width:268px; }
   .wof .rim { box-shadow:0 0 20px #ffd76a66, 0 6px 16px #000a, inset 0 0 14px #000a; }
   #result { min-height:28px; }
+
+  /* ===== ежедневные награды ===== */
+  .dbanner { display:flex; align-items:center; gap:12px; margin-top:12px; padding:12px 14px; border-radius:18px; cursor:pointer;
+             border:1px solid #ffd76a66; background:linear-gradient(110deg,#4a2f05,#1d1240); position:relative; overflow:hidden; }
+  .dbanner:active { transform:scale(.98); }
+  .dbanner.ready { border-color:#ffd76a; box-shadow:0 0 18px #ffd76a55; animation:dpulse 2.2s ease-in-out infinite; }
+  @keyframes dpulse { 50% { box-shadow:0 0 26px #ffd76aaa; } }
+  .dbanner .di { font-size:34px; line-height:1; }
+  .dbanner .dt { flex:1; min-width:0; }
+  .dbanner .dt b { display:block; font-size:15px; font-weight:900; }
+  .dbanner .dt small { display:block; font-size:12px; opacity:.8; margin-top:2px; }
+  .dbanner .dgo { flex:none; padding:8px 12px; border-radius:12px; font-size:13px; font-weight:900; background:linear-gradient(180deg,#ffe58a,#ffb300); color:#2b1a00; }
+  .dbanner:not(.ready) .dgo { background:#ffffff1f; color:#fff; font-weight:700; }
+  .dgrid { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-top:14px; }
+  .dc { padding:7px 0 6px; border-radius:11px; background:#ffffff0f; border:1px solid #ffffff22; text-align:center; position:relative; }
+  .dc small { display:block; font-size:10px; opacity:.7; }
+  .dc i { display:block; font-style:normal; font-size:20px; line-height:1.3; }
+  .dc b { display:block; font-size:13px; color:#ffe58a; }
+  .dc.done { background:#19d3c51f; border-color:#19d3c566; } .dc.done b { color:#7ff3ea; } .dc.done i { opacity:.9; }
+  .dc.today { border-color:#ffd76a; background:#ffd76a26; box-shadow:0 0 14px #ffd76a77; animation:dpulse 2.2s ease-in-out infinite; }
+  .dc.last { background:linear-gradient(160deg,#5a3a00,#2a1d02); border-color:#ffd76a99; } .dc.last b { font-size:14px; }
+
+  /* ===== профиль ===== */
+  .pfhead { display:flex; align-items:center; gap:14px; }
+  .pfhead .avatar { flex:none; width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:34px; cursor:pointer;
+                    background:radial-gradient(circle at 35% 30%,#3a2a78,#150b33); border:2px solid #ffd76a; box-shadow:0 0 16px #ffd76a44; }
+  .pf-n { font-size:19px; font-weight:900; word-break:break-word; }
+  .pf-s { font-size:12px; opacity:.7; margin-top:3px; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:800; margin-top:5px; }
+  .badge.ok { background:#19d3c533; color:#7ff3ea; } .badge.wait { background:#ffd76a2e; color:#ffe58a; }
+  .avpick { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; width:100%; max-width:360px; margin-top:10px; padding:12px; border-radius:16px; background:#ffffff0d; }
+  .avpick span { width:42px; height:42px; display:flex; align-items:center; justify-content:center; font-size:24px; border-radius:50%; background:#ffffff14; cursor:pointer; border:2px solid transparent; }
+  .avpick span.on { border-color:#ffd76a; }
+  .rstep { padding:12px 0; border-top:1px solid #ffffff14; }
+  .rstep:first-of-type { border-top:0; }
+  .rstep .rh { display:flex; align-items:center; gap:10px; font-weight:800; font-size:15px; }
+  .rstep .rh i { flex:none; width:26px; height:26px; border-radius:50%; background:#ffffff1f; font-style:normal; display:flex; align-items:center; justify-content:center; font-size:13px; }
+  .rstep.done .rh i { background:#19d3c5; color:#04201d; }
+  .rstep .rb2 { margin-top:8px; font-size:13px; opacity:.85; line-height:1.5; }
+  .rstep.done .rb2 { opacity:.6; margin-top:4px; padding-left:36px; }
+  .rstep button { margin-top:10px; font-size:15px; padding:12px; }
+  .rstep.lock { opacity:.45; pointer-events:none; }
+  .prow2 { display:flex; justify-content:space-between; gap:10px; padding:8px 0; border-bottom:1px solid #ffffff14; font-size:14px; }
+  .prow2:last-child { border-bottom:0; } .prow2 span:last-child { opacity:.8; text-align:right; word-break:break-all; }
+
+  /* ===== видео-покер ===== */
+  .vpcards { display:flex; justify-content:center; gap:6px; margin:10px 0 4px; min-height:112px; }
+  .vcw { text-align:center; width:56px; }
+  .vc { display:flex; width:56px; height:80px; margin:0; font-size:19px; border-radius:9px; cursor:pointer; transition:transform .15s; }
+  .vcw.held .vc { transform:translateY(-8px); box-shadow:0 0 0 3px #ffd76a, 0 6px 14px #000a; }
+  .vcw .hold { height:16px; margin-top:4px; font-size:10px; font-weight:900; letter-spacing:1px; color:#ffd76a; visibility:hidden; }
+  .vcw.held .hold { visibility:visible; }
+  .vpname { text-align:center; font-weight:900; min-height:24px; color:#ffe58a; font-size:17px; }
+  .prow { display:flex; justify-content:space-between; padding:6px 8px; border-radius:8px; font-size:14px; }
+  .prow:nth-child(odd) { background:#ffffff0a; } .prow.hit { background:#ffd76a33; color:#ffe58a; font-weight:800; }
+  .t-vp { background:linear-gradient(150deg,#1b5fa8,#06203d); }
+  .t-mn { background:linear-gradient(150deg,#8a1f2c,#2a0509); }
+
+  /* ===== минное поле ===== */
+  .mstat { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; text-align:center; }
+  .mstat > div { padding:8px 2px; border-radius:12px; background:#ffffff0d; }
+  .mstat small { display:block; font-size:11px; opacity:.7; } .mstat b { font-size:17px; color:#ffe58a; }
+  .mgrid { display:grid; grid-template-columns:repeat(5,1fr); gap:7px; margin:12px 0 6px; }
+  .mc { aspect-ratio:1; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:26px; cursor:pointer; user-select:none;
+        background:linear-gradient(160deg,#3a3f7a,#1a1c3f); border:1px solid #ffffff2e; transition:transform .12s; }
+  .mc:active { transform:scale(.92); }
+  .mc.safe { background:linear-gradient(160deg,#117a68,#063a33); border-color:#19d3c5aa; cursor:default; animation:modalin .35s; }
+  .mc.mine { background:linear-gradient(160deg,#5a1a24,#240509); border-color:#ff5a6e66; cursor:default; }
+  .mc.boom { background:linear-gradient(160deg,#c9232f,#5a0a12); border-color:#ff9aa5; box-shadow:0 0 16px #ff3b4a; }
+  .mc.dis { cursor:default; opacity:.55; }
+  .mchips { display:flex; gap:6px; margin-top:8px; } .mchips span { flex:1; text-align:center; padding:9px 0; border-radius:8px; background:#ffffff14; font-size:14px; border:1px solid transparent; }
+  .mchips span.on { border-color:var(--cyan); background:#19d3c522; font-weight:800; }
 </style>
 </head>
 <body>
@@ -324,6 +396,13 @@
   </div>
 
   <div class="fsstrip" id="fs_strip" style="display:none"><span id="fs_strip_t"></span><b>Играть ›</b></div>
+
+  <div class="dbanner" id="daily_banner">
+    <div class="di">🎁</div>
+    <div class="dt"><b id="db_t">Ежедневные награды</b><small id="db_s">Заходите каждый день — на 10-й день 1000 🪙</small></div>
+    <div class="dgo" id="db_go">Открыть</div>
+  </div>
+
 
   <div class="qa">
     <div id="qa_promo"><span class="qi">🎟</span><span>Промокод<small>Бонусы и фриспины</small></span></div>
@@ -349,6 +428,8 @@
     <div class="tile t-bj" data-open="2"><div class="ic">🃏</div><div class="tt">Блэкджек</div><div class="ts">Выплата 3:2</div></div>
     <div class="tile t-ttt" data-open="3"><div class="ic">❌</div><div class="tt">Крестики-нолики</div><div class="ts">Победа — x2</div></div>
     <div class="tile t-shl" data-open="4"><div class="ic">🥤</div><div class="tt">Наперстки</div><div class="ts">Угадал — x2.7</div></div>
+    <div class="tile t-vp" data-open="6"><span class="bd hot">NEW</span><div class="ic">♠️</div><div class="tt">Видео-покер</div><div class="ts">Jacks or Better · до x250</div></div>
+    <div class="tile t-mn" data-open="7"><span class="bd hot">NEW</span><div class="ic">💣</div><div class="tt">Минное поле</div><div class="ts">5×5 · забирай, пока не рвануло</div></div>
   </div>
  </div>
 </div>
@@ -432,6 +513,40 @@
     <div style="opacity:.6;font-size:13px;text-align:center" id="sl_info"></div>
     <details class="paytab"><summary>📋 Таблица выплат</summary><div id="sl_pay"></div></details>
   </div>
+
+  <div class="card" id="gc6" style="display:none">
+    <h2>♠️ Видео-покер</h2>
+    <div class="vpname" id="vp_name"></div>
+    <div class="vpcards" id="vp_cards"></div>
+    <div id="vp_bet_box">
+      <input id="vpbet" type="number" inputmode="numeric" min="1" placeholder="Ставка" value="10">
+      <div class="quick" data-for="vpbet"><span data-q="10">10</span><span data-q="100">100</span><span data-q="half">½</span><span data-q="all">Все</span></div>
+      <button id="vp_deal" style="margin-top:14px">Раздать</button>
+    </div>
+    <div id="vp_act_box" style="display:none">
+      <div class="hl" style="text-align:center">Нажмите на карты, которые хотите <b>оставить</b></div>
+      <button id="vp_draw" style="margin-top:10px">Заменить остальные</button>
+    </div>
+    <div class="msg" id="vpmsg"></div>
+    <details class="paytab" open><summary>📋 Таблица выплат (ставка ×)</summary><div id="vp_pay"></div></details>
+    <div style="opacity:.6;font-size:13px;text-align:center;margin-top:8px">Раздаётся 5 карт — оставьте нужные, остальные заменятся один раз. Платит пара валетов и выше.</div>
+  </div>
+
+  <div class="card" id="gc7" style="display:none">
+    <h2>💣 Минное поле</h2>
+    <div class="mstat"><div><small>Множитель</small><b id="mn_mult">x0.00</b></div><div><small>Забрать</small><b id="mn_now">0</b></div><div><small>Следующий</small><b id="mn_next">—</b></div></div>
+    <div class="mgrid" id="mn_grid"></div>
+    <div id="mn_bet_box">
+      <div class="hl" style="margin-top:4px">Количество мин</div>
+      <div class="mchips" id="mn_chips"><span data-m="1">1</span><span data-m="3" class="on">3</span><span data-m="5">5</span><span data-m="10">10</span><span data-m="24">24</span></div>
+      <input id="mnbet" type="number" inputmode="numeric" min="1" placeholder="Ставка" value="10">
+      <div class="quick" data-for="mnbet"><span data-q="10">10</span><span data-q="100">100</span><span data-q="half">½</span><span data-q="all">Все</span></div>
+      <button id="mn_start" style="margin-top:14px">Начать игру</button>
+    </div>
+    <div id="mn_act_box" style="display:none"><button id="mn_cash" class="pink">💰 Забрать выигрыш</button></div>
+    <div class="msg" id="mnmsg"></div>
+    <div style="opacity:.6;font-size:13px;text-align:center">Открывайте клетки: каждая безопасная 💎 увеличивает множитель. Попали на мину 💣 — ставка сгорает. Чем больше мин, тем выше множители.</div>
+  </div>
 </div>
 
 <div id="p4" class="page">
@@ -453,7 +568,7 @@
       <li><i>2</i><div>Друг запускает бота по вашей ссылке</div></li>
       <li><i>3</i><div>Друг вносит депозит от <b><span class="rm">5</span> USDT</b> — вам падает <b><span class="rb">50</span> USDT</b> на баланс</div></li>
     </ul>
-    <div class="info" style="opacity:.6;font-size:12px;margin-top:0">Бонус начисляется один раз за каждого друга, после того как его депозит зачислен. Перед выводом бонус нужно отыграть с вейджером x15 (сумма ставок в 15 раз больше бонуса). Работает только для тех, кто впервые открыл бота.</div>
+    <div class="info" style="opacity:.6;font-size:12px;margin-top:0">Бонус начисляется один раз за каждого друга, после того как его депозит зачислен. Перед выводом бонус нужно отыграть с вейджером x15 (сумма ставок в 15 раз больше бонуса) в течение 24 часов, иначе бонус сгорает. Работает только для тех, кто впервые открыл бота.</div>
   </div>
   <div class="card promo3">
     <span class="acc">🔥 АКЦИЯ</span>
@@ -463,6 +578,72 @@
     <div class="three"><div>1-й<b>💳</b>5+ USDT</div><div>2-й<b>💳</b>5+ USDT</div><div class="bonus">3-й<b>🎁</b>+10 USDT</div></div>
   </div>
   <div class="card"><h2>🙋 Мои друзья</h2><div id="ref_list" class="top">…</div></div>
+</div>
+
+<div id="p5" class="page">
+  <div class="card pfhead" style="max-width:360px">
+    <div class="avatar" id="pf_av">🙂</div>
+    <div><div class="pf-n" id="pf_name">Профиль</div><div class="pf-s" id="pf_sub"></div><span class="badge wait" id="pf_badge">…</span></div>
+  </div>
+  <div class="avpick" id="av_pick" style="display:none"></div>
+
+  <div class="card" id="reg_card">
+    <h2>📝 Регистрация</h2>
+    <div class="info" style="margin-top:0;opacity:.75">Три быстрых шага. Без регистрации можно играть, но ежедневные награды доступны только зарегистрированным игрокам.</div>
+
+    <div class="rstep" id="rs1">
+      <div class="rh"><i>1</i>Ник и возраст</div>
+      <div class="rb2" id="rs1_body">
+        <input id="pf_nick" maxlength="16" placeholder="Ваш ник (3–16 символов)" autocomplete="off" spellcheck="false">
+        <label class="chk"><input type="checkbox" id="pf_adult"> Мне есть 18 лет, я принимаю правила клуба</label>
+        <button id="pf_save" class="pink" type="button">Сохранить</button>
+        <div class="msg" id="pf_msg1"></div>
+      </div>
+    </div>
+
+    <div class="rstep" id="rs2">
+      <div class="rh"><i>2</i>Номер телефона</div>
+      <div class="rb2" id="rs2_body">
+        Подтвердите номер одним нажатием — Telegram сам передаст его боту. Один номер — один аккаунт.
+        <button id="pf_phone" class="pink" type="button">📱 Поделиться номером</button>
+        <div class="msg" id="pf_msg2" style="min-height:0"></div>
+      </div>
+    </div>
+
+    <div class="rstep" id="rs3">
+      <div class="rh"><i>3</i>Электронная почта</div>
+      <div class="rb2" id="rs3_body">
+        <input id="pf_email" type="email" inputmode="email" maxlength="254" placeholder="name@example.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button id="pf_email_send" class="pink" type="button">Отправить код</button>
+        <div id="pf_code_box" style="display:none">
+          <input id="pf_code" inputmode="numeric" maxlength="6" placeholder="Код из письма" autocomplete="one-time-code" style="text-align:center;letter-spacing:6px;font-size:20px">
+          <button id="pf_email_ok" type="button">Подтвердить</button>
+        </div>
+        <div class="msg" id="pf_msg3" style="min-height:0"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📊 Моя статистика</h2>
+    <div class="stats3" style="grid-template-columns:repeat(3,1fr)">
+      <div><b id="ps_bal">0</b><small>баланс 🪙</small></div><div><b id="ps_rounds">0</b><small>раундов</small></div><div><b id="ps_wins">0</b><small>побед</small></div>
+    </div>
+    <div class="stats3" style="margin-top:8px">
+      <div><b id="ps_best">0</b><small>лучший выигрыш</small></div><div><b id="ps_streak">0</b><small>дней серии</small></div><div><b id="ps_inv">0</b><small>друзей</small></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>👤 Данные</h2>
+    <div class="prow2"><span>ID</span><span id="pd_id"></span></div>
+    <div class="prow2"><span>В клубе с</span><span id="pd_since"></span></div>
+    <div class="prow2"><span>Телефон</span><span id="pd_phone">—</span></div>
+    <div class="prow2"><span>Почта</span><span id="pd_email">—</span></div>
+    <div class="info" style="opacity:.6;font-size:12px">Телефон, почта и ник после подтверждения не меняются. Чтобы изменить данные — напишите боту, мы поможем.</div>
+  </div>
+
+  <div class="card" style="padding:12px"><button id="pf_daily" type="button" style="margin-top:0;border-color:#ffd76a;background:linear-gradient(90deg,#4a2f05,#1d1240)">🎁 Ежедневные награды</button></div>
 </div>
 
 <div id="p3" class="page">
@@ -555,7 +736,7 @@
   <div id="ap6" style="width:100%;display:none;flex-direction:column;align-items:center">
     <div class="card">
       <h2>🍀 Регулятор удачи</h2>
-      <div class="info" style="opacity:.8">Режим «щедрости»: игра делает несколько попыток и отдаёт игроку лучший исход. Работает в монетке, наперстках и слотах. Можно включить всем или одному игроку, на время или без срока.</div>
+      <div class="info" style="opacity:.8">Режим «щедрости»: игра делает несколько попыток и отдаёт игроку лучший исход. Работает в монетке, наперстках, слотах, видео-покере и минном поле. Можно включить всем или одному игроку, на время или без срока.</div>
       <div class="nav sub" id="lk_levels" style="margin-top:12px"></div>
       <input id="lk_target" placeholder="Кому: ID или @username (пусто = всем игрокам)">
       <input id="lk_min" type="number" inputmode="numeric" placeholder="На сколько минут (пусто = пока не отключите)">
@@ -604,7 +785,7 @@
         <input id="wd_wallet" placeholder="Ваш кошелёк USDT (TRC20)" style="font-size:14px;text-align:center" autocomplete="off" autocapitalize="off" spellcheck="false">
         <button id="wd_send" class="pink">Вывести</button>
         <div class="msg" id="wd_msg" style="white-space:pre-line"></div>
-        <div class="info" style="opacity:.6;font-size:12px">Монеты списываются сразу. Если заявку отклонят — они вернутся на баланс. Бонусы (промокоды, реферальные, выигрыш с фриспинов) нужно отыграть с вейджером x15.</div>
+        <div class="info" style="opacity:.6;font-size:12px">Монеты списываются сразу. Если заявку отклонят — они вернутся на баланс. Бонусы (промокоды, реферальные, выигрыш с фриспинов) нужно отыграть с вейджером x15 в течение 24 часов, иначе бонус сгорает.</div>
       </div>
     </div>
   </div>
@@ -637,10 +818,24 @@
   </div>
 </div>
 
+<div class="ov" id="daily_ov">
+  <div class="modal pop">
+    <div class="cx" id="daily_x">✕</div>
+    <div class="pu-icon">🎁</div>
+    <div class="pu-title">Ежедневные награды</div>
+    <div class="info" id="daily_sub" style="margin-top:6px"></div>
+    <div class="dgrid" id="dgrid"></div>
+    <button id="daily_claim" class="pink" type="button">Забрать</button>
+    <div class="msg" id="daily_msg" style="white-space:pre-line"></div>
+    <div class="info" style="opacity:.6;font-size:12px;margin-top:0">Заходите каждый день: пропустите день — серия начнётся с 1-го дня, а награды растут. Награды 1–9 дня нужно отыграть (вейджер) за 24 часа, иначе они сгорят, награда 10-го дня — 1000 🪙 без отыгрыша.</div>
+  </div>
+</div>
+
 <div class="bnav">
   <div id="n1" class="on"><b>🏠</b>Меню</div>
   <div id="n4"><b>👥</b>Друзья</div>
   <div id="ncash"><b>💳</b>Касса</div>
+  <div id="n5"><b>👤</b>Профиль</div>
   <div id="n3" style="display:none"><b>🛠</b>Админ</div>
 </div>
 
@@ -669,7 +864,20 @@ async function api(path) {
   const r = await fetch(path, { method:"POST", headers:{"Content-Type":"application/json"},
                                 body: JSON.stringify({ initData: tg.initData }) });
   let data = {}; try { data = await r.json(); } catch (e) {}
+  if (r.status === 403 && data.error === "not_registered") needReg();
   return { status:r.status, data };
+}
+
+// любое действие без регистрации -> отправляем на экран регистрации
+let _regAsked = 0;
+function needReg() {
+  if (Date.now() - _regAsked < 1500) return;
+  _regAsked = Date.now();
+  try { tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("warning"); } catch (e) {}
+  try { tg.showAlert("Сначала завершите регистрацию в профиле: ник, 18+, телефон и почта."); } catch (e) {}
+  const dv = document.getElementById("daily_ov"); if (dv) dv.classList.remove("on");
+  if (typeof spinning !== "undefined") spinning = false;
+  showPage(5);
 }
 
 // ---------- колесо фортуны ----------
@@ -749,7 +957,7 @@ btn.onclick = async () => {
   const { status, data } = await api("/api/spin");
   if (status === 429) { spinning = false; left = data.left; startTimer(); return; }
   if (status !== 200) {
-    spinning = false; resEl.textContent = status === 403 ? "Вам закрыт доступ 🚫" : "Ошибка, попробуйте позже"; renderWheelState(); return;
+    spinning = false; resEl.textContent = (status === 403 && data.error === "not_registered") ? "📝 Нужна регистрация" : status === 403 ? "Вам закрыт доступ 🚫" : "Ошибка, попробуйте позже"; renderWheelState(); return;
   }
   const seg = 360/prizes.length, jitter = (Math.random()-.5)*seg*.7;
   rotation += 360*6 + (360 - (rotation % 360)) - (data.index*seg + seg/2) + jitter;
@@ -798,24 +1006,26 @@ function applyRate(d) {
 }
 const $ = id => document.getElementById(id);
 function setBal(v) { $("bal").textContent = v.toLocaleString("ru-RU"); window._bal = v; }
-// страницы: 1 — меню, 2 — экран игры, 3 — админ, 4 — друзья
+// страницы: 1 — меню, 2 — экран игры, 3 — админ, 4 — друзья, 5 — профиль
 function showPage(n) {
-  [1,2,3,4].forEach(i => $("p"+i).classList.toggle("on", i===n));
-  [1,3,4].forEach(i => $("n"+i).classList.toggle("on", i===n || (n===2 && i===1)));
+  [1,2,3,4,5].forEach(i => $("p"+i).classList.toggle("on", i===n));
+  [1,3,4,5].forEach(i => $("n"+i).classList.toggle("on", i===n || (n===2 && i===1)));
   $("topbar").style.display = n===3 ? "none" : "flex";
   if (n===3) { loadStats(); loadLog(); loadDeposits(); }
   if (n===4) loadRef();
+  if (n===5) loadProfile();
   if (n !== 2 && autoOn) autoStop();
   window.scrollTo(0, 0);
   try { n === 1 ? tg.BackButton.hide() : tg.BackButton.show(); } catch (e) {}
 }
-[1,3,4].forEach(i => $("n"+i).onclick = () => showPage(i));
+[1,3,4,5].forEach(i => $("n"+i).onclick = () => showPage(i));
 $("ncash").onclick = () => $("dep_open").click();
 try { tg.BackButton.onClick(() => showPage(1)); } catch (e) {}
 async function post(path, extra) {
   const r = await fetch(path, { method:"POST", headers:{"Content-Type":"application/json"},
                                 body: JSON.stringify({ initData: tg.initData, ...extra }) });
   let data = {}; try { data = await r.json(); } catch(e) {}
+  if (r.status === 403 && data.error === "not_registered") needReg();
   return { status:r.status, data };
 }
 
@@ -853,13 +1063,15 @@ $("flip").onclick = async () => {
 };
 
 // ---------- открытие игры из меню ----------
-const GAME_TITLES = { 1:"🥟 Пельмень / Тапок", 2:"🃏 Блэкджек", 3:"❌⭕ Крестики-нолики", 4:"🥤 Наперстки", 5:"🎰 Слоты" };
+const GAME_TITLES = { 1:"🥟 Пельмень / Тапок", 2:"🃏 Блэкджек", 3:"❌⭕ Крестики-нолики", 4:"🥤 Наперстки", 5:"🎰 Слоты", 6:"♠️ Видео-покер", 7:"💣 Минное поле" };
 function openGame(n, slotKey) {
   showPage(2);
-  [1,2,3,4,5].forEach(i => $("gc"+i).style.display = i===n ? "block" : "none");
+  [1,2,3,4,5,6,7].forEach(i => $("gc"+i).style.display = i===n ? "block" : "none");
   $("gtitle").textContent = GAME_TITLES[n];
   if (n===2) bjLoad();
   if (n===3) tttLoad();
+  if (n===6) vpLoad();
+  if (n===7) mnLoad();
   if (n===5) { if (slotKey) slKey = slotKey; slLoad().then(() => slSelect(slKey)); renderPacks(); }
 }
 document.querySelectorAll("[data-open]").forEach(el => el.onclick = () => openGame(+el.dataset.open, el.dataset.slot));
@@ -975,6 +1187,7 @@ async function findUser() {
     `Баланс: ${data.balance.toLocaleString("ru-RU")} 🪙`,
     `Прокруток рулетки: ${data.spins}` + (cd > 0 ? ` · до следующей ${Math.floor(cd/3600)}ч ${Math.floor(cd%3600/60)}м` : " · можно крутить"),
     `Был(а) в боте: ${data.last_seen ? fmtTime(data.last_seen) : "—"}`,
+    data.registered ? `✅ Зарегистрирован: ${data.nick} · ${data.phone} · ${data.email}` : `⏳ Не зарегистрирован${data.nick ? " (ник " + data.nick + ")" : ""}${data.phone ? " · " + data.phone : ""}${data.email ? " · " + data.email : ""}`,
     (data.banned ? "🚫 Бан в играх" : "") + (data.blocked_bot ? " · заблокировал(а) бота" : ""),
   ].filter(Boolean).join("\n");
   box.style.whiteSpace = "pre-line";
@@ -1457,7 +1670,8 @@ async function loadWager() {
   const { status, data } = await post("/api/wager"), b = $("wd_wager");
   if (status !== 200 || !data.left) { b.style.display = "none"; $("wd_forfeit").style.display = "none"; return; }
   b.style.display = "block"; $("wd_forfeit").style.display = ""; window._forfeit = data.bonus || 0;
-  b.textContent = `🎯 Бонус нужно отыграть (вейджер x${data.mult}): осталось поставить ${data.left.toLocaleString("ru-RU")} 🪙. Вывод станет доступен после этого`;
+  const hh = Math.floor((data.ends_in || 0) / 3600), mm = Math.floor(((data.ends_in || 0) % 3600) / 60);
+  b.textContent = `🎯 Бонус нужно отыграть (вейджер x${data.mult}): осталось поставить ${data.left.toLocaleString("ru-RU")} 🪙. Срок: ещё ${hh} ч ${mm} мин — иначе бонус сгорит. Вывод станет доступен после отыгрыша`;
 }
 $("wd_forfeit").onclick = async () => {
   const bn = window._forfeit || 0;
@@ -1683,8 +1897,272 @@ $("pr_create").onclick = async () => {
 };
 
 
+// ======================= ЕЖЕДНЕВНЫЕ НАГРАДЫ =======================
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmtHM = s => { s = Math.max(0, s); return Math.floor(s/3600) + "ч " + Math.floor(s%3600/60) + "м"; };
+let DAILY = null;
+const dailyLeft = () => DAILY ? DAILY.next_in - Math.floor((Date.now() - DAILY._t)/1000) : 0;
+async function loadDaily() {
+  const { status, data } = await post("/api/daily/state");
+  if (status !== 200) return;
+  data._t = Date.now(); DAILY = data; renderDaily();
+}
+function renderDaily() {
+  const d = DAILY; if (!d) return;
+  const R = d.rewards, last = R[R.length - 1], left = dailyLeft();
+  if (!d.can_claim && left <= 0) { loadDaily(); return; }
+  const b = $("daily_banner"), cl = $("daily_claim");
+  b.classList.toggle("ready", d.registered && d.can_claim);
+  if (!d.registered) {
+    $("db_t").textContent = "Ежедневные награды"; $("db_s").textContent = `Зарегистрируйтесь — на 10-й день ${last} 🪙`; $("db_go").textContent = "Начать";
+    cl.textContent = "📝 Пройти регистрацию"; cl.disabled = false;
+  } else if (d.can_claim) {
+    $("db_t").textContent = `День ${d.day} из ${R.length} — награда ждёт`; $("db_s").textContent = `+${R[d.day-1]} 🪙 · на 10-й день ${last} 🪙`; $("db_go").textContent = "Забрать";
+    cl.textContent = `🎁 Забрать +${R[d.day-1]} 🪙`; cl.disabled = false;
+  } else {
+    $("db_t").textContent = `Серия: ${d.streak} из ${R.length} дн.`; $("db_s").textContent = `Следующая награда через ${fmtHM(left)}`; $("db_go").textContent = "✓";
+    cl.textContent = `Следующая через ${fmtHM(left)}`; cl.disabled = true;
+  }
+  $("daily_sub").textContent = !d.registered ? "Награды доступны после регистрации (ник, телефон, почта)."
+    : d.broken ? "Серия прервалась — начинаем сначала. Заходите каждый день!" : `Серия: ${d.streak} из ${R.length} · заходите каждый день`;
+  const g = $("dgrid"); g.replaceChildren();
+  R.forEach((amt, i) => {
+    const n = i + 1, c = document.createElement("div"), done = n <= d.streak, today = d.registered && d.can_claim && n === d.day;
+    c.className = "dc" + (n === R.length ? " last" : "") + (done ? " done" : "") + (today ? " today" : "");
+    c.innerHTML = `<small>День ${n}</small><i>${done ? "✅" : n === R.length ? "💎" : "🪙"}</i><b>${amt}</b><small style="font-size:9px;opacity:.8">${n === R.length ? "без отыгрыша" : "x" + (d.wager_mult || 15)}</small>`;
+    g.appendChild(c);
+  });
+}
+function openDaily() { renderDaily(); $("daily_msg").textContent = ""; $("daily_ov").classList.add("on"); }
+$("daily_banner").onclick = openDaily;
+$("pf_daily").onclick = openDaily;
+$("daily_x").onclick = () => $("daily_ov").classList.remove("on");
+$("daily_claim").onclick = async () => {
+  if (!DAILY) return;
+  if (!DAILY.registered) { $("daily_ov").classList.remove("on"); showPage(5); return; }
+  if (!DAILY.can_claim) return;
+  $("daily_claim").disabled = true;
+  const { status, data } = await post("/api/daily/claim");
+  if (status === 200) {
+    setBal(data.balance); data.state._t = Date.now(); DAILY = data.state; renderDaily();
+    $("daily_msg").textContent = `🎉 День ${data.day}: +${data.reward} 🪙`;
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("success");
+  } else if (status === 403 && data.error === "not_registered") {
+    $("daily_ov").classList.remove("on"); showPage(5);
+  } else if (status === 409) {
+    if (data.state) { data.state._t = Date.now(); DAILY = data.state; } renderDaily(); $("daily_msg").textContent = "Сегодняшняя награда уже забрана";
+  } else { $("daily_msg").textContent = status === 403 ? "Вам закрыт доступ 🚫" : "Ошибка, попробуйте позже"; $("daily_claim").disabled = false; }
+};
+setInterval(renderDaily, 30000);
+
+// ======================= ПРОФИЛЬ И РЕГИСТРАЦИЯ =======================
+let PROF = null, wasReg = null, phoneWaiting = false;
+const nf = n => (n || 0).toLocaleString("ru-RU");
+async function loadProfile(silent) {
+  const { status, data } = await post("/api/profile");
+  if (status === 200) renderProfile(data);
+  return status === 200;
+}
+function renderProfile(p) {
+  PROF = p;
+  $("pf_av").textContent = p.avatar; $("pf_name").textContent = p.nickname || "Новый игрок";
+  $("pf_sub").textContent = "ID " + p.id;
+  const b = $("pf_badge"); b.className = "badge " + (p.registered ? "ok" : "wait");
+  b.textContent = p.registered ? "✅ Регистрация завершена" : `⏳ Регистрация: ${[!!p.nickname && p.adult, p.phone_ok, !!p.email].filter(Boolean).length} из 3`;
+  if (p.nickname) $("hello_name").textContent = p.nickname;
+  // шаги регистрации
+  $("reg_card").style.display = p.registered ? "none" : "block";
+  const s1 = !!p.nickname && p.adult, s2 = p.phone_ok, s3 = !!p.email;
+  [["rs1", 1], ["rs2", 2], ["rs3", 3]].forEach(([id, n]) => { $(id).querySelector(".rh i").dataset.n = n; });
+  restoreStep("rs1", s1, `Ник: ${p.nickname} · 18+ подтверждено`);
+  restoreStep("rs2", s2, `Номер ${p.phone} подтверждён`);
+  restoreStep("rs3", s3, `Почта ${p.email}` + (p.email_ok === 2 ? " (без подтверждения)" : " подтверждена"));
+  $("rs2").classList.toggle("lock", !s1); $("rs3").classList.toggle("lock", !s1);
+  if (!s3) { $("pf_code_box").style.display = p.pending_email ? "block" : "none"; if (p.pending_email && !$("pf_email").value) $("pf_email").value = p.pending_email; }
+  // статистика
+  $("ps_bal").textContent = nf(p.balance); $("ps_rounds").textContent = nf(p.rounds); $("ps_wins").textContent = nf(p.wins);
+  $("ps_best").textContent = nf(p.best_win); $("ps_streak").textContent = p.streak; $("ps_inv").textContent = p.invited;
+  $("pd_id").textContent = p.id; $("pd_since").textContent = new Date(p.since * 1000).toLocaleDateString("ru-RU");
+  $("pd_phone").textContent = p.phone || "—"; $("pd_email").textContent = p.email || "—";
+  setBal(p.balance);
+  if (wasReg === false && p.registered) {
+    puQueue.push({ icon: "🎉", title: "Регистрация завершена", text: "Теперь вам доступны ежедневные награды — забирайте бонус каждый день!" });
+    if (!puShowing) showNextPopup(); loadDaily();
+  }
+  wasReg = p.registered;
+}
+function restoreStep(id, done, text) {
+  if (!done) return;
+  const el = $(id); el.classList.add("done"); el.querySelector(".rh i").textContent = "✓"; $(id + "_body").textContent = text;
+}
+// аватар
+$("pf_av").onclick = () => {
+  const box = $("av_pick"); if (box.style.display === "flex") { box.style.display = "none"; return; }
+  box.replaceChildren();
+  (PROF ? PROF.avatars : []).forEach(a => { const s = document.createElement("span"); s.textContent = a; if (PROF.avatar === a) s.className = "on";
+    s.onclick = async () => { const { status, data } = await post("/api/profile/avatar", { avatar: a }); if (status === 200) { renderProfile(data); box.style.display = "none"; } }; box.appendChild(s); });
+  box.style.display = "flex";
+};
+// кнопки шагов (привязываются заново, если блок был пересобран)
+function bindReg() {
+  $("pf_save").onclick = async () => {
+    const m = $("pf_msg1"); m.textContent = "";
+    const nickname = $("pf_nick").value.trim(), adult = $("pf_adult").checked;
+    if (nickname.length < 3) { m.textContent = "Введите ник от 3 символов"; return; }
+    if (!adult) { m.textContent = "Подтвердите, что вам есть 18 лет"; return; }
+    $("pf_save").disabled = true;
+    const { status, data } = await post("/api/profile/save", { nickname, adult });
+    $("pf_save").disabled = false;
+    if (status !== 200) { m.textContent = "❌ " + (data.error || "Ошибка, попробуйте позже"); return; }
+    renderProfile(data);
+  };
+  $("pf_phone").onclick = async () => {
+    const m = $("pf_msg2"); m.style.minHeight = "24px";
+    if (tg.requestContact && tg.isVersionAtLeast && tg.isVersionAtLeast("8.0")) {
+      m.textContent = "Подтвердите отправку номера в окне Telegram…";
+      tg.requestContact(sent => { if (sent === false) m.textContent = "Вы отказались. Номер нужен, чтобы защитить аккаунт и бонусы."; else { m.textContent = "Ждём подтверждения…"; waitPhone(); } });
+    } else {
+      const { status } = await post("/api/profile/phone/ask");
+      m.textContent = status === 200 ? "Мы отправили кнопку в чат с ботом: откройте чат и нажмите «📱 Поделиться номером», затем вернитесь сюда." : "Ошибка, попробуйте позже";
+      if (status === 200) waitPhone();
+    }
+  };
+  $("pf_email_send").onclick = async () => {
+    const m = $("pf_msg3"); m.style.minHeight = "24px"; m.textContent = "";
+    const email = $("pf_email").value.trim();
+    if (!email.includes("@")) { m.textContent = "Введите адрес почты"; return; }
+    $("pf_email_send").disabled = true;
+    const { status, data } = await post("/api/profile/email/send", { email });
+    $("pf_email_send").disabled = false;
+    if (status !== 200) { m.textContent = "❌ " + (data.error || "Ошибка, попробуйте позже"); return; }
+    if (data.direct) { renderProfile(data.profile); return; }
+    $("pf_code_box").style.display = "block"; m.textContent = "📨 Код отправлен — проверьте почту (и папку «Спам»). Действует 10 минут.";
+  };
+  $("pf_email_ok").onclick = async () => {
+    const m = $("pf_msg3"); m.textContent = "";
+    $("pf_email_ok").disabled = true;
+    const { status, data } = await post("/api/profile/email/verify", { code: $("pf_code").value });
+    $("pf_email_ok").disabled = false;
+    if (status !== 200) { m.textContent = "❌ " + (data.error || "Ошибка, попробуйте позже"); return; }
+    renderProfile(data.profile);
+  };
+}
+async function waitPhone() {
+  if (phoneWaiting) return; phoneWaiting = true;
+  for (let i = 0; i < 24; i++) { await sleep(2500); await loadProfile(true); if (PROF && PROF.phone_ok) break; }
+  phoneWaiting = false;
+}
+bindReg();
+
+// ======================= ВИДЕО-ПОКЕР =======================
+const VP_TABLE = [["Роял-флеш", 250], ["Стрит-флеш", 50], ["Каре", 25], ["Фулл-хаус", 8], ["Флеш", 5], ["Стрит", 4], ["Тройка", 3], ["Две пары", 2], ["Пара валетов и выше", 1]];
+let vpHold = [false, false, false, false, false], vpActive = false, vpBusy = false;
+function vpPay(hit) {
+  $("vp_pay").replaceChildren(...VP_TABLE.map(([n, m]) => { const r = document.createElement("div"); r.className = "prow" + (n === hit ? " hit" : "");
+    r.innerHTML = `<span>${n}</span><span>x${m}</span>`; return r; }));
+}
+function vpCards(hand, interactive) {
+  $("vp_cards").replaceChildren(...hand.map((c, i) => {
+    const w = document.createElement("div"); w.className = "vcw" + (interactive && vpHold[i] ? " held" : "");
+    const el = cardEl(c); el.classList.add("vc"); w.appendChild(el);
+    const h = document.createElement("div"); h.className = "hold"; h.textContent = "ДЕРЖАТЬ"; w.appendChild(h);
+    if (interactive) w.onclick = () => { vpHold[i] = !vpHold[i]; w.classList.toggle("held", vpHold[i]); tg.HapticFeedback && tg.HapticFeedback.selectionChanged(); };
+    return w;
+  }));
+}
+function vpRender(st) {
+  setBal(st.balance);
+  vpActive = !!st.active;
+  $("vp_bet_box").style.display = st.active ? "none" : "block"; $("vp_act_box").style.display = st.active ? "block" : "none";
+  if (st.hand) vpCards(st.hand, st.active);
+  if (st.active) { $("vp_name").textContent = st.name ? "✨ " + st.name : ""; vpPay(st.name); $("vpmsg").textContent = ""; }
+  else if (st.final) {
+    $("vp_name").textContent = st.name || "Нет комбинации"; vpPay(st.name);
+    $("vpmsg").textContent = st.payout ? `🎉 ${st.name}! +${st.payout - st.bet} 🪙` : `💀 Не повезло −${st.bet} 🪙`;
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(st.payout ? "success" : "error");
+  } else { $("vp_name").textContent = ""; vpPay(null); }
+}
+function vpErr(status, data) {
+  if (data.balance !== undefined) setBal(data.balance);
+  $("vpmsg").textContent = data.error === "banned" ? "Вам закрыт доступ к играм 🚫" : data.error === "no_money" ? "Недостаточно монет 🪙"
+    : data.error === "already_active" ? "У вас уже идёт раздача" : "Ошибка, попробуйте позже";
+  if (data.error === "already_active" || data.error === "no_game") vpLoad();
+}
+async function vpLoad() { vpHold = [false,false,false,false,false]; const { status, data } = await post("/api/vp/state"); if (status === 200) { vpRender(data); if (!data.active && !data.hand) { $("vp_cards").replaceChildren(); } } }
+$("vp_deal").onclick = async () => {
+  if (vpBusy) return; const bet = parseInt($("vpbet").value, 10);
+  if (!bet || bet < 1) { $("vpmsg").textContent = "Введи ставку"; return; }
+  if (bet > (window._bal || 0)) { $("vpmsg").textContent = "Недостаточно монет 🪙"; return; }
+  vpBusy = true; vpHold = [false,false,false,false,false];
+  const { status, data } = await post("/api/vp/deal", { bet }); vpBusy = false;
+  status === 200 ? vpRender(data) : vpErr(status, data);
+};
+$("vp_draw").onclick = async () => {
+  if (vpBusy || !vpActive) return; vpBusy = true;
+  const hold = vpHold.map((h, i) => h ? i : -1).filter(i => i >= 0);
+  const { status, data } = await post("/api/vp/draw", { hold }); vpBusy = false;
+  status === 200 ? vpRender(data) : vpErr(status, data);
+};
+
+// ======================= МИННОЕ ПОЛЕ =======================
+let mnMines = 3, mnState = null, mnBusy = false;
+document.querySelectorAll("#mn_chips span").forEach(el => el.onclick = () => {
+  mnMines = +el.dataset.m; document.querySelectorAll("#mn_chips span").forEach(s => s.classList.toggle("on", s === el));
+});
+function mnBuild() {
+  const g = $("mn_grid"); g.replaceChildren();
+  for (let i = 0; i < 25; i++) { const c = document.createElement("div"); c.className = "mc"; c.dataset.i = i; c.onclick = () => mnOpen(i); g.appendChild(c); }
+}
+function mnRender(st) {
+  mnState = st; setBal(st.balance);
+  if (st.opened === undefined) { mnBuild(); $("mn_bet_box").style.display = "block"; $("mn_act_box").style.display = "none";
+    $("mn_mult").textContent = "x0.00"; $("mn_now").textContent = "0"; $("mn_next").textContent = "—"; return; }
+  const cells = $("mn_grid").children, mines = st.layout || [];
+  for (let i = 0; i < 25; i++) {
+    const c = cells[i]; c.className = "mc"; c.textContent = "";
+    if (st.opened.includes(i)) { c.classList.add("safe"); c.textContent = "💎"; }
+    else if (mines.includes(i)) { c.classList.add(i === st.hit ? "boom" : "mine"); c.textContent = i === st.hit ? "💥" : "💣"; }
+    else if (!st.active) c.classList.add("dis");
+  }
+  $("mn_bet_box").style.display = st.active ? "none" : "block"; $("mn_act_box").style.display = st.active ? "block" : "none";
+  $("mn_mult").textContent = "x" + (st.mult || 0).toFixed(2); $("mn_now").textContent = nf(st.now); $("mn_next").textContent = st.next_mult ? "x" + st.next_mult.toFixed(2) : "—";
+  $("mn_cash").disabled = !st.opened.length; $("mn_cash").textContent = st.opened.length ? `💰 Забрать ${nf(st.now)} 🪙` : "💰 Откройте клетку";
+  if (!st.active) {
+    const msg = { bust: `💥 Мина! −${st.bet} 🪙`, cash: `🎉 Забрали ${nf(st.payout)} 🪙 (+${nf(st.payout - st.bet)})`, max: `🏆 Максимальный выигрыш! +${nf(st.payout - st.bet)} 🪙` }[st.outcome];
+    $("mnmsg").textContent = msg; tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(st.outcome === "bust" ? "error" : "success");
+  } else $("mnmsg").textContent = "";
+}
+function mnErr(status, data) {
+  if (data.balance !== undefined) setBal(data.balance);
+  $("mnmsg").textContent = data.error === "banned" ? "Вам закрыт доступ к играм 🚫" : data.error === "no_money" ? "Недостаточно монет 🪙"
+    : data.error === "already_active" ? "У вас уже идёт игра" : "Ошибка, попробуйте позже";
+  if (["already_active", "no_game", "already_open"].includes(data.error)) mnLoad();
+}
+async function mnLoad() { mnBuild(); const { status, data } = await post("/api/mines/state"); if (status === 200) mnRender(data); }
+$("mn_start").onclick = async () => {
+  if (mnBusy) return; const bet = parseInt($("mnbet").value, 10);
+  if (!bet || bet < 1) { $("mnmsg").textContent = "Введи ставку"; return; }
+  if (bet > (window._bal || 0)) { $("mnmsg").textContent = "Недостаточно монет 🪙"; return; }
+  mnBusy = true; mnBuild(); const { status, data } = await post("/api/mines/start", { bet, mines: mnMines }); mnBusy = false;
+  status === 200 ? mnRender(data) : mnErr(status, data);
+};
+async function mnOpen(i) {
+  if (mnBusy || !mnState || !mnState.active || mnState.opened.includes(i)) return;
+  mnBusy = true; const { status, data } = await post("/api/mines/open", { cell: i }); mnBusy = false;
+  status === 200 ? mnRender(data) : mnErr(status, data);
+  if (status === 200 && data.active) tg.HapticFeedback && tg.HapticFeedback.impactOccurred("light");
+}
+$("mn_cash").onclick = async () => {
+  if (mnBusy || !mnState || !mnState.active || !mnState.opened.length) return;
+  mnBusy = true; const { status, data } = await post("/api/mines/cash"); mnBusy = false;
+  status === 200 ? mnRender(data) : mnErr(status, data);
+};
+mnBuild(); vpPay(null);
+
 pollPopups();
 init();
+loadDaily();
+loadProfile(true);
 </script>
 </body>
 </html>

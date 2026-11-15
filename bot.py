@@ -11,6 +11,10 @@ import secrets
 import sqlite3
 import hashlib
 import threading
+import smtplib
+from collections import Counter
+from fractions import Fraction
+from email.message import EmailMessage
 from decimal import Decimal
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qsl
@@ -70,6 +74,7 @@ def usdt_str(coins: int) -> str:
 
 # ---- вейджер: бонусные монеты нужно отыграть (сумма ставок) в N раз больше бонуса, прежде чем выводить ----
 WAGER_MULT = int(os.environ.get("WAGER_MULT") or 15)
+WAGER_TTL = int(os.environ.get("WAGER_TTL_HOURS") or 24) * 3600   # срок на отыгрыш любого бонуса (по умолчанию 24 ч)
 
 # ---- вывод ----
 MIN_WITHDRAW = int(os.environ.get("MIN_WITHDRAW_USDT") or 5) * COINS_PER_USDT   # минимум на вывод (по умолчанию 5 USDT)
@@ -133,12 +138,25 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS promo_uses(code TEXT, user_id INTEGER, ts REAL, PRIMARY KEY(code, user_id));
         CREATE TABLE IF NOT EXISTS wager(user_id INTEGER PRIMARY KEY, left INTEGER NOT NULL DEFAULT 0, bonus INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS referrals(user_id INTEGER PRIMARY KEY, referrer_id INTEGER NOT NULL, ts REAL, rewarded INTEGER NOT NULL DEFAULT 0, reward_ts REAL);
+        CREATE TABLE IF NOT EXISTS profiles(user_id INTEGER PRIMARY KEY, nickname TEXT, nick_lc TEXT, avatar TEXT, email TEXT, email_ok INTEGER NOT NULL DEFAULT 0, phone TEXT, phone_ok INTEGER NOT NULL DEFAULT 0, adult INTEGER NOT NULL DEFAULT 0, reg_ts REAL, created REAL);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prof_nick ON profiles(nick_lc);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prof_phone ON profiles(phone);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_prof_email ON profiles(email);
+        CREATE TABLE IF NOT EXISTS email_codes(user_id INTEGER PRIMARY KEY, email TEXT NOT NULL, code_hash TEXT NOT NULL, exp REAL NOT NULL, tries INTEGER NOT NULL DEFAULT 0, sent REAL NOT NULL, cnt INTEGER NOT NULL DEFAULT 1, win REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS daily(user_id INTEGER PRIMARY KEY, streak INTEGER NOT NULL DEFAULT 0, last_day INTEGER, claims INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS vp(user_id INTEGER PRIMARY KEY, deck TEXT, hand TEXT, bet INTEGER);
+        CREATE TABLE IF NOT EXISTS mines(user_id INTEGER PRIMARY KEY, bet INTEGER, mcount INTEGER, opened TEXT);
         """
     )
     try:
         db.execute("ALTER TABLE wager ADD COLUMN bonus INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    try:
+        db.execute("ALTER TABLE wager ADD COLUMN exp REAL")
+    except sqlite3.OperationalError:
+        pass
+    db.execute("UPDATE wager SET exp=? WHERE left>0 AND exp IS NULL", (time.time() + WAGER_TTL,))   # уже идущим бонусам — 24 ч с момента обновления
     for _col in ("invoice_id INTEGER", "pay_url TEXT"):     # миграция: поля для счетов Crypto Pay
         try:
             db.execute(f"ALTER TABLE deposits ADD COLUMN {_col}")
@@ -186,9 +204,33 @@ async def lifespan(app: FastAPI):
         await tg("sendMessage", chat_id=OWNER_ID,
                  text="⚠️ Не задана переменная CRYPTOBOT_TOKEN — пополнения через Crypto Bot не работают.\n"
                       "Добавьте её в Railway → Variables и перезапустите сервис.")
+    if not mail_enabled():
+        await tg("sendMessage", chat_id=OWNER_ID,
+                 text="⚠️ Почта для регистрации не настроена — адреса почты сохраняются БЕЗ подтверждения кодом.\n"
+                      "Добавьте в Railway → Variables: RESEND_API_KEY и EMAIL_FROM (или SMTP_HOST, SMTP_USER, SMTP_PASS, EMAIL_FROM) и перезапустите сервис.")
     poller = asyncio.create_task(deposit_poller())
+    sweeper = asyncio.create_task(wager_sweeper())
     yield
     poller.cancel()
+    sweeper.cancel()
+
+
+async def wager_sweeper():
+    """Раз в минуту сжигает бонусы, которые не отыграли за срок, и уведомляет игроков."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            with db_lock:
+                gone = wager_expire_nolock()
+            for u, removed in gone:
+                msg = (f"⌛ Время на отыгрыш бонуса вышло ({WAGER_TTL // 3600} ч). "
+                       + (f"Бонусные {removed} {CURRENCY} сгорели." if removed else "Вейджер сброшен."))
+                try:
+                    await tg("sendMessage", chat_id=u, text=msg)
+                except Exception:
+                    pass
+        except Exception as e:
+            print("wager_sweeper error:", e)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -250,21 +292,49 @@ def add_balance(uid: int, delta: int, reason: str) -> int:
     db.execute("UPDATE balances SET coins = coins + ? WHERE user_id=?", (delta, uid))
     db.execute("INSERT INTO tx VALUES(?,?,?,?)", (uid, time.time(), delta, reason))
     if delta > 0 and (reason.startswith(("referral bonus", "promo ", "free "))):   # бонусные начисления -> вейджер
-        db.execute("INSERT INTO wager(user_id, left, bonus) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
-                   "left=left+excluded.left, bonus=bonus+excluded.bonus", (uid, delta * WAGER_MULT, delta))
+        db.execute("INSERT INTO wager(user_id, left, bonus, exp) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+                   "left=left+excluded.left, bonus=bonus+excluded.bonus, exp=excluded.exp",
+                   (uid, delta * WAGER_MULT, delta, time.time() + WAGER_TTL))   # каждое новое начисление даёт 24 ч на весь отыгрыш
     db.commit()
     return get_balance(uid)
 
 
 def wager_play(uid: int, bet: int):
     """Реальная ставка (не фриспин) засчитывается в отыгрыш. Вызывать под db_lock."""
-    db.execute("UPDATE wager SET left=MAX(0, left-?) WHERE user_id=? AND left>0", (bet, uid))
+    db.execute("UPDATE wager SET left=MAX(0, left-?) WHERE user_id=? AND left>0 AND (exp IS NULL OR exp>?)", (bet, uid, time.time()))
     db.execute("UPDATE wager SET bonus=0 WHERE user_id=? AND left=0 AND bonus>0", (uid,))   # отыграли — бонус стал обычными деньгами
 
 
+def wager_expire_nolock(uid=None) -> list:
+    """Сгоревшие бонусы (не отыграли за WAGER_TTL): бонусные монеты списываются, вейджер обнуляется.
+    Вызывать под db_lock. Возвращает [(user_id, списано_монет)]."""
+    q, args = "SELECT user_id, bonus FROM wager WHERE left>0 AND exp IS NOT NULL AND exp<=?", [time.time()]
+    if uid is not None:
+        q += " AND user_id=?"
+        args.append(uid)
+    out = []
+    for u, bonus in db.execute(q, args).fetchall():
+        removed = min(bonus, get_balance(u))
+        if removed > 0:
+            add_balance(u, -removed, "bonus expired")
+        db.execute("UPDATE wager SET left=0, bonus=0, exp=NULL WHERE user_id=?", (u,))
+        out.append((u, removed))
+    if out:
+        db.commit()
+    return out
+
+
 def wager_left(uid: int) -> int:
+    """Вызывать под db_lock."""
+    wager_expire_nolock(uid)
     row = db.execute("SELECT left FROM wager WHERE user_id=?", (uid,)).fetchone()
     return row[0] if row else 0
+
+
+def wager_ends_in(uid: int) -> int:
+    """Сколько секунд осталось на отыгрыш (0 — бонуса нет). Вызывать под db_lock."""
+    row = db.execute("SELECT exp FROM wager WHERE user_id=? AND left>0", (uid,)).fetchone()
+    return max(0, int(row[0] - time.time())) if row and row[0] else 0
 
 
 def resolve_target(target: str):
@@ -306,6 +376,16 @@ def luck_tries(uid: int) -> int:
 
 
 BANNED_RESP = lambda: JSONResponse({"error": "banned"}, status_code=403)
+
+
+def reg_block(uid: int):
+    """Проверка регистрации. Вызывать под db_lock. None — можно, иначе готовый ответ 403 not_registered.
+    Владелец (OWNER_ID) освобождён, чтобы можно было тестировать."""
+    if uid == OWNER_ID:
+        return None
+    if reg_done(reg_refresh(uid)):
+        return None
+    return JSONResponse({"error": "not_registered"}, status_code=403)
 
 
 async def body_user(req: Request):
@@ -358,13 +438,15 @@ async def status(req: Request):
         bal = get_balance(user["id"])
         adm = is_admin(user["id"])
         packs = packs_nolock(user["id"])
+        wl = wager_left(user["id"])
+        bal = get_balance(user["id"])            # после возможного сгорания бонуса
     return {
         "balance": bal,
         "is_admin": adm,
         "is_owner": user["id"] == OWNER_ID,
         "left": seconds_left(user["id"]),
         "packs": packs,
-        "wager_left": wager_left(user["id"]), "rate": COINS_PER_USDT, "min_deposit": MIN_DEPOSIT, "min_withdraw": MIN_WITHDRAW,
+        "wager_left": wl, "rate": COINS_PER_USDT, "min_deposit": MIN_DEPOSIT, "min_withdraw": MIN_WITHDRAW,
         "ref_bonus_usdt": REF_BONUS_USDT, "ref_min_usdt": REF_MIN_USDT,
         "prizes": [{k: p.get(k) for k in ("kind", "name", "emoji", "big", "small", "color", "dark", "rare")}
                    for p in WHEEL_PRIZES],
@@ -388,6 +470,9 @@ async def spin(req: Request):
     with db_lock:  # защита от двойного нажатия
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         left = seconds_left_nolock(uid)
         if left > 0:
             return JSONResponse({"error": "cooldown", "left": left}, status_code=429)
@@ -429,6 +514,9 @@ async def coin(req: Request):
     with db_lock:  # атомарно: проверка баланса + списание/начисление
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         bal = get_balance(uid)
         if bet > bal:
             return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
@@ -620,6 +708,9 @@ async def bj_start(req: Request):
     with db_lock:
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         if bj_load(uid):
             return JSONResponse({"error": "already_active"}, status_code=409)
         bal = get_balance(uid)
@@ -689,6 +780,9 @@ async def admin_find(req: Request):
             "id": uid, "name": row[1], "username": row[2], "balance": get_balance(uid),
             "last_seen": info[0], "blocked_bot": bool(info[1]), "banned": is_banned(uid),
             "spins": spins, "cooldown_left": _cd_nolock(uid),
+            "nick": prof_get(uid, create=False)["nickname"] or "",
+            "phone": prof_get(uid, create=False)["phone"] or "", "email": prof_get(uid, create=False)["email"] or "",
+            "registered": reg_done(prof_get(uid, create=False)),
         }
 
 
@@ -865,6 +959,9 @@ async def ttt_start(req: Request):
     with db_lock:
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         if db.execute("SELECT 1 FROM ttt WHERE user_id=?", (uid,)).fetchone():
             return JSONResponse({"error": "already_active"}, status_code=409)
         bal = get_balance(uid)
@@ -925,6 +1022,9 @@ async def shell(req: Request):
     with db_lock:
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         bal = get_balance(uid)
         if bet > bal:
             return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
@@ -1267,6 +1367,9 @@ async def slot_spin_api(req: Request):
     with db_lock:  # атомарно: проверка баланса + списание/начисление
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         if free:
             pk = db.execute("SELECT bet, kind FROM freespins WHERE id=? AND user_id=? AND spins_left>0",
                             (pack_id, uid)).fetchone()
@@ -1455,6 +1558,9 @@ async def deposit_create(req: Request):
     with db_lock:
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         recent = db.execute(
             "SELECT COUNT(*) FROM deposits WHERE user_id=? AND ts>?", (uid, time.time() - 3600)
         ).fetchone()[0]
@@ -1765,6 +1871,9 @@ async def withdraw_create(req: Request):
     if not WALLET_RE.match(wallet):
         return JSONResponse({"error": "Неверный адрес TRC20 (начинается с T, 34 символа)"}, status_code=400)
     with db_lock:
+        if uid != OWNER_ID and not reg_done(reg_refresh(uid)):
+            return JSONResponse({"error": "Для вывода завершите регистрацию в разделе «Профиль»"}, status_code=403)
+        wager_expire_nolock(uid)      # сначала сжигаем просроченный бонус, потом проверяем баланс
         open_n = db.execute("SELECT COUNT(*) FROM withdrawals WHERE user_id=? AND status IN ('pending','frozen')",
                             (uid,)).fetchone()[0]
         if open_n >= 3:
@@ -1775,7 +1884,7 @@ async def withdraw_create(req: Request):
         wl = wager_left(uid)
         if wl > 0:
             return JSONResponse({"error": f"Сначала отыграйте бонус: осталось поставить {wl} {CURRENCY} "
-                                          f"(вейджер x{WAGER_MULT})", "wager_left": wl}, status_code=400)
+                                          f"(вейджер x{WAGER_MULT}, срок — {WAGER_TTL // 3600} ч)", "wager_left": wl}, status_code=400)
         usdt = usdt_str(coins)
         cur = db.execute("INSERT INTO withdrawals(user_id, ts, coins, usdt, wallet, status) VALUES(?,?,?,?,?,'pending')",
                          (uid, time.time(), coins, usdt, wallet))
@@ -1796,7 +1905,9 @@ def _wager_bonus(uid: int) -> int:
 async def wager_info(req: Request):
     _, user = await body_user(req)
     with db_lock:
-        return {"left": wager_left(user["id"]), "mult": WAGER_MULT, "bonus": _wager_bonus(user["id"])}
+        left = wager_left(user["id"])
+        return {"left": left, "mult": WAGER_MULT, "bonus": _wager_bonus(user["id"]),
+                "ends_in": wager_ends_in(user["id"]), "ttl_hours": WAGER_TTL // 3600}
 
 
 @app.post("/api/wager/cancel")
@@ -1947,6 +2058,9 @@ async def promo_redeem(req: Request):
     with db_lock:
         if is_banned(uid):
             return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
         row = db.execute("SELECT coins, spins, bet, max_uses, used, active FROM promos WHERE code=?", (code,)).fetchone()
         if not row or not row[5]:
             return _promo_fail(uid, "Промокод не найден или отключён")
@@ -2071,6 +2185,581 @@ async def register_referral(uid: int, ref_id: int, u: dict):
                   f"Когда он пополнит счёт от {REF_MIN_USDT} USDT, вы получите {REF_BONUS_USDT} USDT.")
 
 
+# =====================================================================
+#  РЕГИСТРАЦИЯ · ПРОФИЛЬ · ЕЖЕДНЕВНЫЕ НАГРАДЫ · ВИДЕО-ПОКЕР · МИННОЕ ПОЛЕ
+# =====================================================================
+
+# ---- ежедневные награды ----
+DAILY_TZ = int(os.environ.get("DAILY_TZ_OFFSET") or 3)           # «игровой день» меняется в полночь по этому поясу (часов от UTC; 3 = Москва)
+DAILY_REWARDS = [10, 20, 30, 50, 75, 100, 150, 250, 400, 1000]    # монет за 1-й … 10-й день подряд; дни 1–9 — с отыгрышем, 10-й — 1000 БЕЗ отыгрыша
+DAILY_DAYS = len(DAILY_REWARDS)
+
+# ---- регистрация ----
+REQUIRE_REG_WITHDRAW = os.environ.get("REQUIRE_REG_WITHDRAW") == "1"   # 1 = выводить могут только зарегистрированные
+NICK_RE = re.compile(r"^\w[\w .\-]{1,14}\w$")                      # 3–16 символов: буквы, цифры, _ . - и пробел
+EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,200}\.[A-Za-z]{2,24}$")
+AVATARS = ["🙂", "😎", "🤠", "🐶", "🐱", "🦊", "🐼", "🦁", "🐸", "🦄", "🐲", "👑", "🎩", "🍀", "💎", "🎰"]
+EMAIL_CODE_TTL = 600         # код из письма действует 10 минут
+RESEND_KEY = (os.environ.get("RESEND_API_KEY") or "").strip()      # вариант 1: Resend (работает по HTTPS, подходит для Railway)
+SMTP_HOST = (os.environ.get("SMTP_HOST") or "").strip()            # вариант 2: обычный SMTP
+SMTP_PORT = int(os.environ.get("SMTP_PORT") or 587)
+SMTP_USER = (os.environ.get("SMTP_USER") or "").strip()
+SMTP_PASS = os.environ.get("SMTP_PASS") or ""
+SMTP_SSL = os.environ.get("SMTP_SSL") == "1"                       # 1 = SSL с самого начала (обычно порт 465)
+EMAIL_FROM = (os.environ.get("EMAIL_FROM") or SMTP_USER or "").strip()
+
+
+def mail_enabled() -> bool:
+    return bool(EMAIL_FROM and (RESEND_KEY or SMTP_HOST))
+
+
+def _smtp_send(to: str, subject: str, text: str):
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = EMAIL_FROM, to, subject
+    msg.set_content(text)
+    if SMTP_SSL:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            if SMTP_USER:
+                s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            if SMTP_USER:
+                s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+
+
+async def send_email(to: str, subject: str, text: str) -> bool:
+    try:
+        if RESEND_KEY:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.post("https://api.resend.com/emails", headers={"Authorization": f"Bearer {RESEND_KEY}"},
+                                 json={"from": EMAIL_FROM, "to": [to], "subject": subject, "text": text})
+            if r.status_code >= 300:
+                print("resend error:", r.status_code, r.text[:300])
+            return r.status_code < 300
+        if SMTP_HOST:
+            await asyncio.to_thread(_smtp_send, to, subject, text)
+            return True
+    except Exception as e:
+        print("email error:", repr(e))
+    return False
+
+
+# ---------- профиль ----------
+PROF_COLS = ("nickname", "avatar", "email", "email_ok", "phone", "phone_ok", "adult", "reg_ts", "created")
+
+
+def prof_get(uid: int, create: bool = True) -> dict:
+    """Вызывать под db_lock."""
+    if create:
+        db.execute("INSERT OR IGNORE INTO profiles(user_id, avatar, created) VALUES(?,?,?)", (uid, AVATARS[0], time.time()))
+    row = db.execute(f"SELECT {','.join(PROF_COLS)} FROM profiles WHERE user_id=?", (uid,)).fetchone()
+    if not row:
+        return {c: None for c in PROF_COLS} | {"avatar": AVATARS[0], "email_ok": 0, "phone_ok": 0, "adult": 0}
+    return dict(zip(PROF_COLS, row))
+
+
+def reg_done(p: dict) -> bool:
+    """Регистрация завершена: ник + 18+ + подтверждённый телефон + почта."""
+    return bool(p["nickname"] and p["adult"] and p["phone_ok"] and p["email"])
+
+
+def reg_refresh(uid: int) -> dict:
+    """Вызывать под db_lock. Отмечает момент завершения регистрации."""
+    p = prof_get(uid)
+    if reg_done(p) and not p["reg_ts"]:
+        p["reg_ts"] = time.time()
+        db.execute("UPDATE profiles SET reg_ts=? WHERE user_id=?", (p["reg_ts"], uid))
+    db.commit()
+    return p
+
+
+def mask_phone(ph) -> str:
+    return (ph[:2] + "•" * max(0, len(ph) - 6) + ph[-4:]) if ph else ""
+
+
+def mask_email(e) -> str:
+    name, _, dom = (e or "").partition("@")
+    return (name[:1] + "•••@" + dom) if e else ""
+
+
+def _mail_hash(uid: int, email: str, code: str) -> str:
+    return hmac.new(BOT_TOKEN.encode(), f"{uid}:{email}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+_WIN_SQL = ("(reason='coin win' OR reason='shell win' OR reason LIKE '%slot %win%' "
+            "OR reason IN ('bj win','bj blackjack','ttt win','vp win','mines cashout'))")
+_ROUND_SQL = ("(reason IN ('bj bet','ttt bet','vp bet','mines bet') OR reason LIKE 'coin %' "
+              "OR reason LIKE 'shell %' OR reason LIKE '%slot %')")
+
+
+def profile_payload(uid: int) -> dict:
+    """Вызывать под db_lock."""
+    p = reg_refresh(uid)
+    rounds, wins, best, first = db.execute(
+        f"SELECT SUM(CASE WHEN {_ROUND_SQL} THEN 1 ELSE 0 END), "
+        f"SUM(CASE WHEN delta>0 AND {_WIN_SQL} THEN 1 ELSE 0 END), "
+        f"MAX(CASE WHEN delta>0 AND {_WIN_SQL} THEN delta ELSE 0 END), MIN(ts) FROM tx WHERE user_id=?", (uid,)).fetchone()
+    invited = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (uid,)).fetchone()[0]
+    d = daily_state_nolock(uid)
+    pend = db.execute("SELECT email, sent FROM email_codes WHERE user_id=? AND exp>?", (uid, time.time())).fetchone()
+    return {
+        "id": uid, "nickname": p["nickname"] or "", "avatar": p["avatar"], "adult": bool(p["adult"]),
+        "phone_ok": bool(p["phone_ok"]), "phone": mask_phone(p["phone"]) if p["phone_ok"] else "",
+        "email": mask_email(p["email"]), "email_ok": p["email_ok"], "mail_enabled": mail_enabled(),
+        "pending_email": pend[0] if pend else "", "registered": reg_done(p),
+        "avatars": AVATARS, "balance": get_balance(uid),
+        "rounds": rounds or 0, "wins": wins or 0, "best_win": best or 0, "invited": invited,
+        "streak": d["streak"], "claims": d["claims"],
+        "since": min([t for t in (first, p["created"]) if t] or [time.time()]),
+    }
+
+
+@app.post("/api/profile")
+async def profile_get(req: Request):
+    _, user = await body_user(req)
+    with db_lock:
+        return profile_payload(user["id"])
+
+
+@app.post("/api/profile/save")
+async def profile_save(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    nick = re.sub(r"\s+", " ", str(body.get("nickname", "")).strip())
+    if not NICK_RE.match(nick):
+        return JSONResponse({"error": "Ник: 3–16 символов — буквы, цифры, пробел, _ . -"}, status_code=400)
+    if not body.get("adult"):
+        return JSONResponse({"error": "Нужно подтвердить, что вам исполнилось 18 лет"}, status_code=400)
+    with db_lock:
+        p = reg_refresh(uid)
+        if p["nickname"] and reg_done(p):
+            return JSONResponse({"error": "Ник нельзя изменить после регистрации — напишите в поддержку"}, status_code=409)
+        try:
+            db.execute("UPDATE profiles SET nickname=?, nick_lc=?, adult=1 WHERE user_id=?", (nick, nick.lower(), uid))
+        except sqlite3.IntegrityError:
+            return JSONResponse({"error": "Этот ник уже занят — выберите другой"}, status_code=409)
+        reg_refresh(uid)
+        return profile_payload(uid)
+
+
+@app.post("/api/profile/avatar")
+async def profile_avatar(req: Request):
+    body, user = await body_user(req)
+    av = body.get("avatar")
+    if av not in AVATARS:
+        return JSONResponse({"error": "bad_avatar"}, status_code=400)
+    with db_lock:
+        prof_get(user["id"])
+        db.execute("UPDATE profiles SET avatar=? WHERE user_id=?", (av, user["id"]))
+        db.commit()
+        return profile_payload(user["id"])
+
+
+@app.post("/api/profile/phone/ask")
+async def profile_phone_ask(req: Request):
+    """Запасной путь для старых клиентов Telegram: отправляем в чат кнопку «Поделиться номером»."""
+    _, user = await body_user(req)
+    with db_lock:
+        if prof_get(user["id"])["phone_ok"]:
+            return {"ok": True, "already": True}
+    await tg("sendMessage", chat_id=user["id"],
+             text="📱 Нажмите кнопку ниже, чтобы подтвердить номер телефона.\nНомер нужен только для защиты аккаунта и бонусов.",
+             reply_markup={"keyboard": [[{"text": "📱 Поделиться номером", "request_contact": True}]],
+                           "resize_keyboard": True, "one_time_keyboard": True})
+    return {"ok": True}
+
+
+@app.post("/api/profile/email/send")
+async def profile_email_send(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    email = str(body.get("email", "")).strip().lower()
+    if len(email) > 254 or not EMAIL_RE.match(email):
+        return JSONResponse({"error": "Введите корректный адрес почты"}, status_code=400)
+    with db_lock:
+        p = reg_refresh(uid)
+        if p["email"]:
+            return JSONResponse({"error": "Почта уже привязана"}, status_code=409)
+        if db.execute("SELECT 1 FROM profiles WHERE email=? AND user_id!=?", (email, uid)).fetchone():
+            return JSONResponse({"error": "Эта почта уже привязана к другому аккаунту"}, status_code=409)
+        if not mail_enabled():   # почтовый сервис не подключён — сохраняем адрес без подтверждения
+            db.execute("UPDATE profiles SET email=?, email_ok=2 WHERE user_id=?", (email, uid))
+            reg_refresh(uid)
+            return {"ok": True, "direct": True, "profile": profile_payload(uid)}
+        now = time.time()
+        row = db.execute("SELECT sent, cnt, win FROM email_codes WHERE user_id=?", (uid,)).fetchone()
+        cnt, win = 0, now
+        if row:
+            if now - row[0] < 60:
+                return JSONResponse({"error": f"Повторная отправка через {int(60 - (now - row[0])) + 1} с"}, status_code=429)
+            cnt, win = (row[1], row[2]) if now - row[2] <= 3600 else (0, now)
+            if cnt >= 5:
+                return JSONResponse({"error": "Слишком много писем — попробуйте через час"}, status_code=429)
+        code = f"{secrets.randbelow(10 ** 6):06d}"
+        db.execute("INSERT OR REPLACE INTO email_codes(user_id, email, code_hash, exp, tries, sent, cnt, win) VALUES(?,?,?,?,?,?,?,?)",
+                   (uid, email, _mail_hash(uid, email, code), now + EMAIL_CODE_TTL, 0, now, cnt + 1, win))
+        db.commit()
+    ok = await send_email(email, f"Код подтверждения: {code}",
+                          f"Ваш код подтверждения: {code}\n\nОн действует {EMAIL_CODE_TTL // 60} минут. "
+                          "Если вы не запрашивали код — просто проигнорируйте это письмо.")
+    if not ok:
+        return JSONResponse({"error": "Не удалось отправить письмо — проверьте адрес или попробуйте позже"}, status_code=502)
+    return {"ok": True, "direct": False, "ttl": EMAIL_CODE_TTL}
+
+
+@app.post("/api/profile/email/verify")
+async def profile_email_verify(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    code = re.sub(r"\D", "", str(body.get("code", "")))
+    if len(code) != 6:
+        return JSONResponse({"error": "Введите 6 цифр из письма"}, status_code=400)
+    with db_lock:
+        row = db.execute("SELECT email, code_hash, exp, tries FROM email_codes WHERE user_id=?", (uid,)).fetchone()
+        if not row:
+            return JSONResponse({"error": "Сначала запросите код"}, status_code=400)
+        email, h, exp, tries = row
+        if time.time() > exp:
+            return JSONResponse({"error": "Код истёк — запросите новый"}, status_code=400)
+        if tries >= 5:
+            return JSONResponse({"error": "Слишком много неверных попыток — запросите новый код"}, status_code=429)
+        if not hmac.compare_digest(h, _mail_hash(uid, email, code)):
+            db.execute("UPDATE email_codes SET tries=tries+1 WHERE user_id=?", (uid,))
+            db.commit()
+            return JSONResponse({"error": f"Неверный код (осталось попыток: {max(0, 4 - tries)})"}, status_code=400)
+        try:
+            db.execute("UPDATE profiles SET email=?, email_ok=1 WHERE user_id=?", (email, uid))
+        except sqlite3.IntegrityError:
+            return JSONResponse({"error": "Эта почта уже привязана к другому аккаунту"}, status_code=409)
+        db.execute("DELETE FROM email_codes WHERE user_id=?", (uid,))
+        reg_refresh(uid)
+        return {"ok": True, "profile": profile_payload(uid)}
+
+
+async def handle_contact(msg: dict, contact: dict):
+    """Игрок поделился номером (кнопка в чате или Telegram.WebApp.requestContact)."""
+    uid, chat_id = msg["from"]["id"], msg["chat"]["id"]
+    menu = {"keyboard": [[{"text": MENU_BTN}]], "resize_keyboard": True, "is_persistent": True}   # заодно убираем кнопку «Поделиться»
+    if contact.get("user_id") != uid:
+        await tg("sendMessage", chat_id=chat_id, text="⚠️ Нужно отправить именно свой номер — нажмите «📱 Поделиться номером».")
+        return
+    digits = re.sub(r"\D", "", str(contact.get("phone_number", "")))
+    if not 8 <= len(digits) <= 15:
+        await tg("sendMessage", chat_id=chat_id, text="⚠️ Не удалось распознать номер. Попробуйте ещё раз.", reply_markup=menu)
+        return
+    phone = "+" + digits
+    with db_lock:
+        p = prof_get(uid)
+        if p["phone_ok"]:
+            text = "✅ Номер уже подтверждён. Возвращайтесь в приложение — «Профиль»."
+        else:
+            try:
+                db.execute("UPDATE profiles SET phone=?, phone_ok=1 WHERE user_id=?", (phone, uid))
+                reg_refresh(uid)
+                text = "✅ Номер подтверждён! Возвращайтесь в приложение и завершите регистрацию в разделе «Профиль»."
+            except sqlite3.IntegrityError:
+                text = ("⚠️ Этот номер уже привязан к другому аккаунту. "
+                        "Если это ошибка — напишите сюда, мы разберёмся.")
+    await tg("sendMessage", chat_id=chat_id, text=text, reply_markup=menu)
+
+
+# ---------- ежедневные награды ----------
+def day_no() -> int:
+    return (int(time.time()) + DAILY_TZ * 3600) // 86400
+
+
+def secs_to_next_day() -> int:
+    return 86400 - (int(time.time()) + DAILY_TZ * 3600) % 86400
+
+
+def daily_state_nolock(uid: int) -> dict:
+    """Состояние серии. Вызывать под db_lock."""
+    row = db.execute("SELECT streak, last_day, claims FROM daily WHERE user_id=?", (uid,)).fetchone()
+    streak, last, claims = row if row else (0, None, 0)
+    today = day_no()
+    broken = False
+    if last == today:
+        cur, can = streak, False            # сегодня уже забрали
+    elif last == today - 1 and streak < DAILY_DAYS:
+        cur, can = streak, True             # серия продолжается
+    else:
+        cur, can = 0, True                  # серия прервана или цикл из 10 дней пройден — заново с 1-го дня
+        broken = last is not None and last < today - 1 and streak > 0
+    return {"streak": cur, "can_claim": can, "day": cur + 1 if can else None, "broken": broken,
+            "next_in": secs_to_next_day(), "claims": claims, "rewards": DAILY_REWARDS, "wager_mult": WAGER_MULT, "no_wager_day": DAILY_DAYS,
+            "registered": reg_done(prof_get(uid, create=False))}
+
+
+@app.post("/api/daily/state")
+async def daily_state(req: Request):
+    _, user = await body_user(req)
+    with db_lock:
+        return daily_state_nolock(user["id"])
+
+
+@app.post("/api/daily/claim")
+async def daily_claim(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        if not reg_done(reg_refresh(uid)):          # награды только для завершивших регистрацию (защита от мультиаккаунтов)
+            return JSONResponse({"error": "not_registered"}, status_code=403)
+        st = daily_state_nolock(uid)
+        if not st["can_claim"]:
+            return JSONResponse({"error": "already", "state": st}, status_code=409)
+        d, today = st["day"], day_no()
+        reward = DAILY_REWARDS[d - 1]
+        db.execute("INSERT INTO daily(user_id, streak, last_day, claims) VALUES(?,?,?,1) "
+                   "ON CONFLICT(user_id) DO UPDATE SET streak=?, last_day=?, claims=claims+1", (uid, d, today, d, today))
+        if d < DAILY_DAYS:      # дни 1–9: бонус с отыгрышем («free …» -> вейджер x WAGER_MULT)
+            bal = add_balance(uid, reward, f"free daily day {d}")
+        else:                   # 10-й день: чистые деньги, БЕЗ отыгрыша (префикс не «free»)
+            bal = add_balance(uid, reward, f"daily day {d} nowager")
+        return {"ok": True, "day": d, "reward": reward, "balance": bal, "state": daily_state_nolock(uid)}
+
+
+# ---------- видео-покер (Jacks or Better) ----------
+VP_PAY = [("Роял-флеш", 250), ("Стрит-флеш", 50), ("Каре", 25), ("Фулл-хаус", 8), ("Флеш", 5),
+          ("Стрит", 4), ("Тройка", 3), ("Две пары", 2), ("Пара валетов и выше", 1)]
+VP_MULT = dict(VP_PAY)
+
+
+def vp_eval(cards):
+    """Название комбинации или None."""
+    r = sorted(RANKS.index(c[:-1]) for c in cards)
+    flush = len({c[-1] for c in cards}) == 1
+    straight = len(set(r)) == 5 and (r[4] - r[0] == 4 or r == [0, 1, 2, 3, 12])
+    cnt = Counter(r)
+    top = sorted(cnt.values(), reverse=True)
+    if flush and r == [8, 9, 10, 11, 12]:
+        return "Роял-флеш"
+    if flush and straight:
+        return "Стрит-флеш"
+    if top[0] == 4:
+        return "Каре"
+    if top == [3, 2]:
+        return "Фулл-хаус"
+    if flush:
+        return "Флеш"
+    if straight:
+        return "Стрит"
+    if top[0] == 3:
+        return "Тройка"
+    if top == [2, 2, 1]:
+        return "Две пары"
+    if top[0] == 2 and any(v == 2 and k >= 9 for k, v in cnt.items()):
+        return "Пара валетов и выше"
+    return None
+
+
+def vp_load(uid: int):
+    row = db.execute("SELECT deck, hand, bet FROM vp WHERE user_id=?", (uid,)).fetchone()
+    return {"deck": json.loads(row[0]), "hand": json.loads(row[1]), "bet": row[2]} if row else None
+
+
+def vp_view(uid: int, g: dict, final: bool = False, payout: int = 0, name=None) -> dict:
+    return {"active": not final, "hand": g["hand"], "bet": g["bet"], "balance": get_balance(uid),
+            "name": name if final else vp_eval(g["hand"]), "payout": payout, "final": final}
+
+
+@app.post("/api/vp/state")
+async def vp_state(req: Request):
+    _, user = await body_user(req)
+    with db_lock:
+        g = vp_load(user["id"])
+        return vp_view(user["id"], g) if g else {"active": False, "balance": get_balance(user["id"])}
+
+
+@app.post("/api/vp/deal")
+async def vp_deal(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        bet = int(body.get("bet"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    if bet < 1 or bet > MAX_BET:
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
+        if vp_load(uid):
+            return JSONResponse({"error": "already_active"}, status_code=409)
+        bal = get_balance(uid)
+        if bet > bal:
+            return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        wager_play(uid, bet)
+        add_balance(uid, -bet, "vp bet")
+        deck = [r + s_ for r in RANKS for s_ in SUITS]
+        secrets.SystemRandom().shuffle(deck)
+        g = {"hand": deck[:5], "deck": deck[5:], "bet": bet}
+        db.execute("INSERT OR REPLACE INTO vp VALUES(?,?,?,?)", (uid, json.dumps(g["deck"]), json.dumps(g["hand"]), bet))
+        db.commit()
+        return vp_view(uid, g)
+
+
+@app.post("/api/vp/draw")
+async def vp_draw(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    raw = body.get("hold")
+    if not isinstance(raw, list) or any(not isinstance(i, int) or isinstance(i, bool) or not 0 <= i <= 4 for i in raw):
+        return JSONResponse({"error": "bad_hold"}, status_code=400)
+    hold = set(raw)
+    with db_lock:
+        g = vp_load(uid)
+        if not g:
+            return JSONResponse({"error": "no_game"}, status_code=409)
+        best = None
+        for t in range(luck_tries(uid)):               # режим удачи: несколько вариантов добора, берём лучший
+            deck = list(g["deck"])
+            if t:
+                secrets.SystemRandom().shuffle(deck)
+            new, k = list(g["hand"]), 0
+            for i in range(5):
+                if i not in hold:
+                    new[i] = deck[k]
+                    k += 1
+            name = vp_eval(new)
+            mult = VP_MULT.get(name, 0)
+            if best is None or mult > best[1]:
+                best = (new, mult, name)
+        g["hand"], mult, name = best
+        payout = g["bet"] * mult
+        if payout:
+            add_balance(uid, payout, "vp win")
+        db.execute("DELETE FROM vp WHERE user_id=?", (uid,))
+        db.commit()
+        return vp_view(uid, g, final=True, payout=payout, name=name)
+
+
+# ---------- минное поле ----------
+MINES_CELLS = 25             # поле 5×5
+MINES_EDGE = Fraction(97, 100)   # RTP 97%: множитель = честный множитель × 0.97
+
+
+def mines_mult(m: int, k: int) -> Fraction:
+    """Множитель после k безопасных открытий при m минах."""
+    r = MINES_EDGE
+    for i in range(k):
+        r *= Fraction(MINES_CELLS - i, MINES_CELLS - m - i)
+    return r
+
+
+def mines_pay(bet: int, m: int, k: int) -> int:
+    return min(int(bet * mines_mult(m, k)), bet * MAX_WIN_X)
+
+
+def mines_load(uid: int):
+    row = db.execute("SELECT bet, mcount, opened FROM mines WHERE user_id=?", (uid,)).fetchone()
+    return {"bet": row[0], "mcount": row[1], "opened": json.loads(row[2])} if row else None
+
+
+def mines_view(uid: int, g: dict, outcome=None, layout=None, hit=None, payout=0) -> dict:
+    k, m, bet = len(g["opened"]), g["mcount"], g["bet"]
+    return {"active": outcome is None, "bet": bet, "mines": m, "opened": g["opened"],
+            "mult": round(float(mines_mult(m, k)), 2) if k else 0, "now": mines_pay(bet, m, k) if k else 0,
+            "next_mult": round(float(mines_mult(m, k + 1)), 2) if k < MINES_CELLS - m else None,
+            "outcome": outcome, "layout": layout, "hit": hit, "payout": payout, "balance": get_balance(uid)}
+
+
+def mines_cash(uid: int, g: dict) -> dict:
+    k = len(g["opened"])
+    payout = mines_pay(g["bet"], g["mcount"], k)
+    if payout:
+        add_balance(uid, payout, "mines cashout")
+    db.execute("DELETE FROM mines WHERE user_id=?", (uid,))
+    db.commit()
+    return mines_view(uid, g, "max" if payout >= g["bet"] * MAX_WIN_X else "cash", payout=payout)
+
+
+@app.post("/api/mines/state")
+async def mines_state(req: Request):
+    _, user = await body_user(req)
+    with db_lock:
+        g = mines_load(user["id"])
+        return mines_view(user["id"], g) if g else {"active": False, "balance": get_balance(user["id"])}
+
+
+@app.post("/api/mines/start")
+async def mines_start(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        bet, m = int(body.get("bet")), int(body.get("mines"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    if bet < 1 or bet > MAX_BET or not 1 <= m <= MINES_CELLS - 1:
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        _rb = reg_block(uid)
+        if _rb:
+            return _rb
+        if mines_load(uid):
+            return JSONResponse({"error": "already_active"}, status_code=409)
+        bal = get_balance(uid)
+        if bet > bal:
+            return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        wager_play(uid, bet)
+        add_balance(uid, -bet, "mines bet")
+        db.execute("INSERT OR REPLACE INTO mines VALUES(?,?,?,?)", (uid, bet, m, "[]"))
+        db.commit()
+        return mines_view(uid, {"bet": bet, "mcount": m, "opened": []})
+
+
+@app.post("/api/mines/open")
+async def mines_open(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    cell = body.get("cell")
+    if not isinstance(cell, int) or isinstance(cell, bool) or not 0 <= cell < MINES_CELLS:
+        return JSONResponse({"error": "bad_cell"}, status_code=400)
+    with db_lock:
+        g = mines_load(uid)
+        if not g:
+            return JSONResponse({"error": "no_game"}, status_code=409)
+        if cell in g["opened"]:
+            return JSONResponse({"error": "already_open"}, status_code=409)
+        left, m = MINES_CELLS - len(g["opened"]), g["mcount"]     # закрытых клеток и мин среди них
+        # мины раскладываются «лениво»: шанс мины в клетке = m/left. Режим удачи даёт несколько попыток — мина только если выпала во всех
+        is_mine = all(secrets.randbelow(left) < m for _ in range(luck_tries(uid)))
+        if is_mine:
+            others = [c for c in range(MINES_CELLS) if c not in g["opened"] and c != cell]
+            layout = sorted([cell] + secrets.SystemRandom().sample(others, m - 1))
+            db.execute("DELETE FROM mines WHERE user_id=?", (uid,))
+            db.commit()
+            return mines_view(uid, g, "bust", layout=layout, hit=cell)
+        g["opened"].append(cell)
+        if len(g["opened"]) >= MINES_CELLS - m or mines_pay(g["bet"], m, len(g["opened"])) >= g["bet"] * MAX_WIN_X:
+            return mines_cash(uid, g)                             # открыты все безопасные клетки / достигнут потолок выигрыша
+        db.execute("UPDATE mines SET opened=? WHERE user_id=?", (json.dumps(g["opened"]), uid))
+        db.commit()
+        return mines_view(uid, g)
+
+
+@app.post("/api/mines/cash")
+async def mines_cashout(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        g = mines_load(uid)
+        if not g:
+            return JSONResponse({"error": "no_game"}, status_code=409)
+        if not g["opened"]:
+            return JSONResponse({"error": "open_first"}, status_code=400)
+        return mines_cash(uid, g)
+
+
 # ---------- приветствие ----------
 async def send_welcome(chat_id: int, u: dict, first_time: bool = False):
     name = html.escape((u.get("first_name") or "друг").strip() or "друг")
@@ -2084,7 +2773,9 @@ async def send_welcome(chat_id: int, u: dict, first_time: bool = False):
             "🃏 <b>Блэкджек</b> — обыграй дилера\n"
             "🥟 <b>Пельмень или Тапок</b> — орёл и решка по-нашему\n"
             "🎯 <b>Наперстки</b> и <b>крестики-нолики</b> на монеты\n"
-            "🎡 <b>Колесо фортуны</b> — бесплатная прокрутка каждые 12 часов\n\n"
+            "💣 <b>Минное поле</b> и ♠️ <b>Видео-покер</b>\n"
+            "🎡 <b>Колесо фортуны</b> — бесплатная прокрутка каждые 12 часов\n"
+            "🎁 <b>Ежедневные награды</b> — заходи каждый день, на 10-й день ждёт 1000 🪙\n\n"
             "🎁 Есть промокоды, а за приглашённых друзей — бонусы.\n\n"
             "Жми <b>«Играть»</b> и забирай свою удачу 🍀"
         )
@@ -2122,6 +2813,11 @@ async def handle_message(msg: dict):
         with db_lock:
             was_known = db.execute("SELECT 1 FROM users WHERE user_id=?", (uid,)).fetchone() is not None
         touch_user(msg["from"])
+
+    # игрок поделился номером телефона (регистрация)
+    if msg.get("contact") and msg["chat"].get("type") == "private":
+        await handle_contact(msg, msg["contact"])
+        return
 
     # владелец вводит причину отклонения вывода (команда отменяет ожидание)
     if uid == OWNER_ID and text:
