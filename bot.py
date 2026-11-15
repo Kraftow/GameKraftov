@@ -1,4 +1,6 @@
 import os
+import re
+import html
 import hmac
 import json
 import time
@@ -43,6 +45,26 @@ COIN_SIDES = {"pelmen": ("Пельмень", "🥟"), "tapok": ("Тапок", "�
 MAX_BET = 1_000_000_000
 CURRENCY = "🪙"
 
+# ---- пополнение (1 USDT = 25 монет) ----
+COINS_PER_USDT = 25
+DEPOSIT_WALLET = os.environ.get("DEPOSIT_WALLET") or "TLdiZJdSN82A1HDRB3WBTDeTXmmv2xJLMT"
+DEPOSIT_NETWORK = "TRC20"
+MIN_DEPOSIT, MAX_DEPOSIT = 25, 1_000_000   # в монетах (минимум = 1 USDT)
+
+
+def usdt_str(coins: int) -> str:
+    cents = coins * 100 // COINS_PER_USDT   # 25 монет = 1 USDT -> всегда ровно до сотых
+    return f"{cents // 100}.{cents % 100:02d}"
+
+# ---- вывод ----
+MIN_WITHDRAW = 25   # в монетах (1 USDT)
+WALLET_RE = re.compile(r"^T[1-9A-HJ-NP-Za-km-z]{33}$")  # адрес TRC20
+
+# ---- крестики-нолики и наперстки ----
+TTT_BLOCK_CHANCE = 75        # % — как часто бот замечает вашу выигрышную линию и блокирует её
+SHELL_MULT = (27, 10)        # выплата при угадывании: ставка x2.7 (шанс 1 из 3)
+POPUP_TTL = 3 * 24 * 3600    # сколько дней непросмотренное окно ждёт игрока
+
 # (название, эмодзи, вес). Сумма весов = 140, поэтому шансы нормируются:
 # Фартануло ≈21.4%, Туз ≈42.9%, 100$ ≈10.7%, Не повезло 25%
 PRIZES = [
@@ -66,6 +88,12 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS banned(user_id INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS cd_skip(user_id INTEGER PRIMARY KEY, ts REAL);
         CREATE TABLE IF NOT EXISTS bj(user_id INTEGER PRIMARY KEY, deck TEXT, player TEXT, dealer TEXT, bet INTEGER);
+        CREATE TABLE IF NOT EXISTS ttt(user_id INTEGER PRIMARY KEY, board TEXT, bet INTEGER);
+        CREATE TABLE IF NOT EXISTS deposits(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, ts REAL, amount INTEGER, status TEXT);
+        CREATE TABLE IF NOT EXISTS popups(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, icon TEXT, title TEXT, text TEXT, ts REAL);
+        CREATE TABLE IF NOT EXISTS popup_seen(user_id INTEGER, popup_id INTEGER, PRIMARY KEY(user_id, popup_id));
+        CREATE TABLE IF NOT EXISTS withdrawals(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, ts REAL, coins INTEGER, usdt TEXT, wallet TEXT, status TEXT, reason TEXT);
+        CREATE TABLE IF NOT EXISTS admin_wait(owner_id INTEGER PRIMARY KEY, wd_id INTEGER, card_msg_id INTEGER);
         """
     )
     db.commit()
@@ -83,7 +111,7 @@ async def lifespan(app: FastAPI):
         "setWebhook",
         url=f"{BASE_URL}/webhook",
         secret_token=WEBHOOK_SECRET,
-        allowed_updates=["message"],
+        allowed_updates=["message", "callback_query"],
     )
     await tg(
         "setChatMenuButton",
@@ -615,14 +643,427 @@ async def static_img(name: str):
     return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), name), media_type="image/svg+xml")
 
 
+# ---------- Крестики-нолики ----------
+WIN_LINES = [(0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6)]
+
+
+def ttt_winner(b: str):
+    for a, c, d in WIN_LINES:
+        if b[a] != "-" and b[a] == b[c] == b[d]:
+            return b[a]
+    return None
+
+
+def ttt_bot_move(b: str) -> int:
+    empty = [i for i, ch in enumerate(b) if ch == "-"]
+    for mark, chance in (("O", 100), ("X", TTT_BLOCK_CHANCE)):  # сначала выиграть, потом (не всегда) заблокировать
+        if secrets.randbelow(100) < chance:
+            for i in empty:
+                if ttt_winner(b[:i] + mark + b[i + 1:]) == mark:
+                    return i
+    if 4 in empty and secrets.randbelow(100) < 70:
+        return 4
+    return secrets.choice(empty)
+
+
+def ttt_view(uid: int, b: str, bet: int, outcome=None, payout=0) -> dict:
+    return {"active": outcome is None, "board": list(b), "bet": bet, "outcome": outcome,
+            "payout": payout, "balance": get_balance(uid)}
+
+
+def ttt_settle(uid: int, b: str, bet: int, outcome: str) -> dict:
+    payout = {"win": bet * 2, "push": bet, "lose": 0}[outcome]
+    if payout:
+        add_balance(uid, payout, f"ttt {outcome}")
+    db.execute("DELETE FROM ttt WHERE user_id=?", (uid,))
+    db.commit()
+    return ttt_view(uid, b, bet, outcome, payout)
+
+
+@app.post("/api/ttt/state")
+async def ttt_state(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        row = db.execute("SELECT board, bet FROM ttt WHERE user_id=?", (uid,)).fetchone()
+        return ttt_view(uid, row[0], row[1]) if row else {"active": False, "balance": get_balance(uid)}
+
+
+@app.post("/api/ttt/start")
+async def ttt_start(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        bet = int(body.get("bet"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    if bet < 1 or bet > MAX_BET:
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        if db.execute("SELECT 1 FROM ttt WHERE user_id=?", (uid,)).fetchone():
+            return JSONResponse({"error": "already_active"}, status_code=409)
+        bal = get_balance(uid)
+        if bet > bal:
+            return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        add_balance(uid, -bet, "ttt bet")
+        b = "-" * 9
+        db.execute("INSERT OR REPLACE INTO ttt VALUES(?,?,?)", (uid, b, bet))
+        db.commit()
+        return ttt_view(uid, b, bet)
+
+
+@app.post("/api/ttt/move")
+async def ttt_move(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        cell = int(body.get("cell"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad_cell"}, status_code=400)
+    if not 0 <= cell <= 8:
+        return JSONResponse({"error": "bad_cell"}, status_code=400)
+    with db_lock:
+        row = db.execute("SELECT board, bet FROM ttt WHERE user_id=?", (uid,)).fetchone()
+        if not row:
+            return JSONResponse({"error": "no_game"}, status_code=409)
+        b, bet = row
+        if b[cell] != "-":
+            return JSONResponse({"error": "bad_cell"}, status_code=400)
+        b = b[:cell] + "X" + b[cell + 1:]          # ход игрока
+        if ttt_winner(b) == "X":
+            return ttt_settle(uid, b, bet, "win")
+        if "-" not in b:
+            return ttt_settle(uid, b, bet, "push")
+        j = ttt_bot_move(b)                         # ход бота
+        b = b[:j] + "O" + b[j + 1:]
+        if ttt_winner(b) == "O":
+            return ttt_settle(uid, b, bet, "lose")
+        if "-" not in b:
+            return ttt_settle(uid, b, bet, "push")
+        db.execute("UPDATE ttt SET board=? WHERE user_id=?", (b, uid))
+        db.commit()
+        return ttt_view(uid, b, bet)
+
+
+# ---------- Наперстки ----------
+@app.post("/api/shell")
+async def shell(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        bet, cup = int(body.get("bet")), int(body.get("cup"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    if bet < 1 or bet > MAX_BET or cup not in (0, 1, 2):
+        return JSONResponse({"error": "bad_bet"}, status_code=400)
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        bal = get_balance(uid)
+        if bet > bal:
+            return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        ball = secrets.randbelow(3)                 # шарик выбирается честно и независимо от вашего выбора
+        won = ball == cup
+        payout = bet * SHELL_MULT[0] // SHELL_MULT[1] if won else 0
+        bal = add_balance(uid, payout - bet, f"shell {'win' if won else 'lose'}")
+    return {"ball": ball, "won": won, "payout": payout, "balance": bal}
+
+
+# ---------- Пополнение счёта ----------
+@app.post("/api/deposit/create")
+async def deposit_create(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        amount = int(body.get("amount"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Введите количество монет — целое число"}, status_code=400)
+    if amount < MIN_DEPOSIT or amount > MAX_DEPOSIT:
+        return JSONResponse({"error": f"От {MIN_DEPOSIT} до {MAX_DEPOSIT} монет"}, status_code=400)
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        recent = db.execute(
+            "SELECT COUNT(*) FROM deposits WHERE user_id=? AND status='new' AND ts>?", (uid, time.time() - 3600)
+        ).fetchone()[0]
+        if recent >= 10:
+            return JSONResponse({"error": "Слишком много заявок, попробуйте позже"}, status_code=429)
+        cur = db.execute(
+            "INSERT INTO deposits(user_id, ts, amount, status) VALUES(?,?,?,'new')", (uid, time.time(), amount)
+        )
+        db.commit()
+        dep_id = cur.lastrowid
+    return {"id": dep_id, "amount": amount, "usdt": usdt_str(amount), "currency": "USDT",
+            "network": DEPOSIT_NETWORK, "wallet": DEPOSIT_WALLET}
+
+
+@app.post("/api/deposit/paid")
+async def deposit_paid(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        dep_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Ошибка"}, status_code=400)
+    with db_lock:
+        row = db.execute("SELECT amount, status FROM deposits WHERE id=? AND user_id=?", (dep_id, uid)).fetchone()
+        if not row or row[1] != "new":
+            return JSONResponse({"error": "Заявка не найдена или уже отправлена"}, status_code=404)
+        db.execute("UPDATE deposits SET status='claimed' WHERE id=?", (dep_id,))
+        db.commit()
+    who = f"{user.get('first_name', '')} @{user.get('username', '—')} (id {uid})"
+    await tg("sendMessage", chat_id=OWNER_ID,
+             text=f"💸 Заявка на пополнение #{dep_id}\nОт: {who}\nСумма: {usdt_str(row[0])} USDT ({DEPOSIT_NETWORK}) = {row[0]} {CURRENCY}\n\n"
+                  f"Проверьте поступление на кошелёк и зачислите в приложении: Админ → Обзор → Заявки на пополнение.")
+    return {"ok": True}
+
+
+@app.post("/api/admin/deposits")
+async def admin_deposits(req: Request):
+    await body_admin(req)
+    with db_lock:
+        rows = db.execute(
+            "SELECT d.id, d.user_id, u.first_name, u.username, d.amount, d.ts FROM deposits d "
+            "LEFT JOIN users u ON u.user_id=d.user_id WHERE d.status='claimed' ORDER BY d.ts DESC LIMIT 30"
+        ).fetchall()
+    return {"items": [{"id": a, "user_id": b, "name": c or "", "username": d or "", "amount": e, "usdt": usdt_str(e), "ts": f}
+                      for a, b, c, d, e, f in rows]}
+
+
+@app.post("/api/admin/deposit_ok")
+async def admin_deposit_ok(req: Request):
+    body, _ = await body_admin(req)
+    try:
+        dep_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Ошибка"}, status_code=400)
+    approve = bool(body.get("ok"))
+    with db_lock:
+        row = db.execute("SELECT user_id, amount FROM deposits WHERE id=? AND status='claimed'", (dep_id,)).fetchone()
+        if not row:
+            return JSONResponse({"error": "Заявка не найдена или уже обработана"}, status_code=404)
+        db.execute("UPDATE deposits SET status=? WHERE id=?", ("done" if approve else "rejected", dep_id))
+        new_bal = add_balance(row[0], row[1], f"deposit #{dep_id}") if approve else None
+        db.commit()
+    if approve:
+        await tg("sendMessage", chat_id=row[0],
+                 text=f"✅ Пополнение на {usdt_str(row[1])} USDT зачислено: +{row[1]} {CURRENCY}\nБаланс: {new_bal} {CURRENCY}")
+    else:
+        await tg("sendMessage", chat_id=row[0],
+                 text=f"❌ Заявка на пополнение #{dep_id} отклонена. Если вы оплатили — напишите нам через «Обратная связь».")
+    return {"ok": True, "approved": approve}
+
+
+
+# ---------- Касса: вывод средств ----------
+WD_STATUS = {"pending": "⏳ Ожидает решения", "approved": "✅ Одобрено", "rejected": "❌ Отклонено", "frozen": "🧊 Заморожено"}
+
+
+def wd_card_nolock(wd_id: int):
+    """Текст карточки заявки для админа. Вызывать под db_lock."""
+    r = db.execute(
+        "SELECT w.user_id, w.coins, w.usdt, w.wallet, w.status, w.reason, u.first_name, u.username "
+        "FROM withdrawals w LEFT JOIN users u ON u.user_id=w.user_id WHERE w.id=?", (wd_id,)
+    ).fetchone()
+    if not r:
+        return None
+    uid, coins, usdt, wallet, status, reason, fn, un = r
+    who = f"{html.escape(fn or '—')} @{html.escape(un or '—')} (id {uid})"
+    text = (f"💸 <b>Запрос на вывод #{wd_id}</b>\nИгрок: {who}\n"
+            f"Сумма: {coins} {CURRENCY} = <b>{usdt} USDT</b> ({DEPOSIT_NETWORK})\n"
+            f"Кошелёк: <code>{html.escape(wallet)}</code>\n\nСтатус: {WD_STATUS.get(status, status)}")
+    if reason:
+        text += f"\nПричина: {html.escape(reason)}"
+    return text, status
+
+
+def wd_kb(status: str, wd_id: int) -> dict:
+    ok = {"text": "✅ Одобрить", "callback_data": f"wd:ok:{wd_id}"}
+    no = {"text": "❌ Отклонить", "callback_data": f"wd:no:{wd_id}"}
+    fr = {"text": "🧊 Заморозить", "callback_data": f"wd:fr:{wd_id}"}
+    if status == "pending":
+        return {"inline_keyboard": [[ok, no, fr]]}
+    if status == "frozen":
+        return {"inline_keyboard": [[ok, no]]}
+    return {"inline_keyboard": []}
+
+
+async def wd_resolve(wd_id: int, action: str, reason: str = "", chat_id=None, msg_id=None):
+    """action: approve | reject | freeze. Возвращает (ok, текст для админа)."""
+    with db_lock:
+        row = db.execute("SELECT user_id, coins, usdt, status FROM withdrawals WHERE id=?", (wd_id,)).fetchone()
+        if not row:
+            return False, "Заявка не найдена"
+        uid, coins, usdt, status = row
+        allowed = {"approve": ("pending", "frozen"), "reject": ("pending", "frozen"), "freeze": ("pending",)}[action]
+        if status not in allowed:
+            return False, f"Заявка #{wd_id} уже обработана: {WD_STATUS.get(status, status)}"
+        new = {"approve": "approved", "reject": "rejected", "freeze": "frozen"}[action]
+        db.execute("UPDATE withdrawals SET status=?, reason=? WHERE id=?", (new, reason or None, wd_id))
+        if action == "reject":  # монеты были заморожены при создании заявки — возвращаем
+            add_balance(uid, coins, f"withdraw refund #{wd_id}")
+        db.commit()
+        card = wd_card_nolock(wd_id)
+    if action == "approve":
+        note = f"✅ Вывод #{wd_id} одобрен: {usdt} USDT ({coins} {CURRENCY}) отправляются на ваш кошелёк."
+    elif action == "reject":
+        note = (f"❌ Вывод #{wd_id} отклонён.\nПричина: {reason}\n"
+                f"Монеты ({coins} {CURRENCY}) возвращены на ваш баланс.")
+    else:
+        note = f"🧊 Вывод #{wd_id} заморожен. Напишите нам через «{FEEDBACK_BTN}», чтобы уточнить детали."
+    await tg("sendMessage", chat_id=uid, text=note)
+    if chat_id and msg_id and card:
+        await tg("editMessageText", chat_id=chat_id, message_id=msg_id, text=card[0], parse_mode="HTML",
+                 reply_markup=wd_kb(card[1], wd_id))
+    return True, f"Заявка #{wd_id}: {WD_STATUS[new]}"
+
+
+@app.post("/api/withdraw/create")
+async def withdraw_create(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    try:
+        coins = int(body.get("coins"))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Введите количество монет — целое число"}, status_code=400)
+    wallet = str(body.get("wallet", "")).strip()
+    if coins < MIN_WITHDRAW or coins > MAX_BET:
+        return JSONResponse({"error": f"Минимум для вывода — {MIN_WITHDRAW} монет"}, status_code=400)
+    if not WALLET_RE.match(wallet):
+        return JSONResponse({"error": "Неверный адрес TRC20 (начинается с T, 34 символа)"}, status_code=400)
+    with db_lock:
+        open_n = db.execute("SELECT COUNT(*) FROM withdrawals WHERE user_id=? AND status IN ('pending','frozen')",
+                            (uid,)).fetchone()[0]
+        if open_n >= 3:
+            return JSONResponse({"error": "У вас уже есть необработанные заявки на вывод"}, status_code=429)
+        bal = get_balance(uid)
+        if coins > bal:
+            return JSONResponse({"error": "Недостаточно монет", "balance": bal}, status_code=400)
+        usdt = usdt_str(coins)
+        cur = db.execute("INSERT INTO withdrawals(user_id, ts, coins, usdt, wallet, status) VALUES(?,?,?,?,?,'pending')",
+                         (uid, time.time(), coins, usdt, wallet))
+        wd_id = cur.lastrowid
+        new_bal = add_balance(uid, -coins, f"withdraw #{wd_id}")  # монеты замораживаются до решения админа
+        card = wd_card_nolock(wd_id)
+    await tg("sendMessage", chat_id=OWNER_ID, text=card[0], parse_mode="HTML", reply_markup=wd_kb("pending", wd_id))
+    return {"ok": True, "id": wd_id, "coins": coins, "usdt": usdt, "balance": new_bal}
+
+
+@app.post("/api/cashier/history")
+async def cashier_history(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        deps = db.execute("SELECT amount, status, ts FROM deposits WHERE user_id=? AND status IN ('claimed','done','rejected') "
+                          "ORDER BY ts DESC LIMIT 30", (uid,)).fetchall()
+        wds = db.execute("SELECT coins, usdt, status, reason, ts FROM withdrawals WHERE user_id=? ORDER BY ts DESC LIMIT 30",
+                         (uid,)).fetchall()
+    items = [{"kind": "deposit", "coins": a, "usdt": usdt_str(a), "status": b, "reason": "", "ts": c} for a, b, c in deps]
+    items += [{"kind": "withdraw", "coins": a, "usdt": b, "status": c, "reason": d or "", "ts": e} for a, b, c, d, e in wds]
+    items.sort(key=lambda x: x["ts"], reverse=True)
+    return {"items": items[:40]}
+
+
+async def handle_callback(cb: dict):
+    cid, uid = cb["id"], cb["from"]["id"]
+    if uid != OWNER_ID:
+        await tg("answerCallbackQuery", callback_query_id=cid)
+        return
+    parts = (cb.get("data") or "").split(":")
+    try:
+        assert len(parts) == 3 and parts[0] == "wd"
+        act, wd_id = parts[1], int(parts[2])
+    except (AssertionError, ValueError):
+        await tg("answerCallbackQuery", callback_query_id=cid)
+        return
+    m = cb.get("message") or {}
+    chat_id, msg_id = (m.get("chat") or {}).get("id"), m.get("message_id")
+    if act == "no":  # причину вводим отдельным сообщением
+        with db_lock:
+            row = db.execute("SELECT status FROM withdrawals WHERE id=?", (wd_id,)).fetchone()
+            if not row or row[0] not in ("pending", "frozen"):
+                busy = True
+            else:
+                busy = False
+                db.execute("INSERT OR REPLACE INTO admin_wait VALUES(?,?,?)", (OWNER_ID, wd_id, msg_id))
+                db.commit()
+        if busy:
+            await tg("answerCallbackQuery", callback_query_id=cid, text="Заявка уже обработана")
+            return
+        await tg("answerCallbackQuery", callback_query_id=cid)
+        await tg("sendMessage", chat_id=chat_id,
+                 text=f"✍️ Напишите причину отклонения заявки #{wd_id} — она придёт игроку.\n"
+                      f"(Любая команда, например /start, отменит отклонение.)",
+                 reply_markup={"force_reply": True, "input_field_placeholder": "Причина отклонения"})
+        return
+    action = {"ok": "approve", "fr": "freeze"}.get(act)
+    if not action:
+        await tg("answerCallbackQuery", callback_query_id=cid)
+        return
+    ok, info = await wd_resolve(wd_id, action, "", chat_id, msg_id)
+    await tg("answerCallbackQuery", callback_query_id=cid, text=info[:150])
+
+
+# ---------- Всплывающие сообщения от админа ----------
+@app.post("/api/popups")
+async def popups_get(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        rows = db.execute(
+            "SELECT id, icon, title, text FROM popups WHERE (user_id IS NULL OR user_id=?) AND ts>? "
+            "AND id NOT IN (SELECT popup_id FROM popup_seen WHERE user_id=?) ORDER BY id LIMIT 5",
+            (uid, time.time() - POPUP_TTL, uid),
+        ).fetchall()
+    return {"items": [{"id": a, "icon": b, "title": c, "text": d} for a, b, c, d in rows]}
+
+
+@app.post("/api/popups/seen")
+async def popups_seen(req: Request):
+    body, user = await body_user(req)
+    ids = [i for i in (body.get("ids") or []) if isinstance(i, int)][:20]
+    with db_lock:
+        for i in ids:
+            db.execute("INSERT OR IGNORE INTO popup_seen VALUES(?,?)", (user["id"], i))
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/admin/popup")
+async def admin_popup(req: Request):
+    body, _ = await body_admin(req)
+    text = str(body.get("text", "")).strip()
+    title = str(body.get("title", "")).strip()
+    icon = str(body.get("icon", "")).strip() or "📢"
+    target = str(body.get("target", "")).strip()
+    if not text or len(text) > 600 or len(title) > 80 or len(icon) > 8:
+        return JSONResponse({"error": "Текст обязателен (до 600 символов), заголовок до 80"}, status_code=400)
+    with db_lock:
+        uid = None
+        name = "всем"
+        if target:
+            row = resolve_target(target)
+            if not row:
+                return JSONResponse({"error": "Пользователь не найден"}, status_code=404)
+            uid, name = row[0], row[1] or str(row[0])
+        db.execute("INSERT INTO popups(user_id, icon, title, text, ts) VALUES(?,?,?,?,?)",
+                   (uid, icon, title, text, time.time()))
+        db.commit()
+    return {"ok": True, "name": name}
+
+
 # ---------- вебхук бота ----------
 @app.post("/webhook")
 async def webhook(req: Request, x_telegram_bot_api_secret_token: str = Header(None)):
     if x_telegram_bot_api_secret_token != WEBHOOK_SECRET:
         raise HTTPException(403)
-    msg = (await req.json()).get("message")
-    if msg:
-        await handle_message(msg)
+    upd = await req.json()
+    if upd.get("callback_query"):
+        await handle_callback(upd["callback_query"])
+    elif upd.get("message"):
+        await handle_message(upd["message"])
     return {"ok": True}
 
 
@@ -632,6 +1073,18 @@ async def handle_message(msg: dict):
     text = msg.get("text", "")
     if msg["chat"].get("type") == "private":
         touch_user(msg["from"])
+
+    # владелец вводит причину отклонения вывода (команда отменяет ожидание)
+    if uid == OWNER_ID and text:
+        with db_lock:
+            w = db.execute("SELECT wd_id, card_msg_id FROM admin_wait WHERE owner_id=?", (uid,)).fetchone()
+            if w:
+                db.execute("DELETE FROM admin_wait WHERE owner_id=?", (uid,))
+                db.commit()
+        if w and not text.startswith("/"):
+            ok, info = await wd_resolve(w[0], "reject", text.strip()[:300], chat_id, w[1])
+            await tg("sendMessage", chat_id=chat_id, text=("✅ " if ok else "⚠️ ") + info)
+            return
 
     # владелец отвечает на пересланную обратную связь -> уходит пользователю
     if uid == OWNER_ID and msg.get("reply_to_message"):

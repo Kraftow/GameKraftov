@@ -76,11 +76,61 @@
   .chk { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:14px; }
   .chk input { width:auto; margin:0; }
   .soon { text-align:center; padding:30px 16px; } .soon .big { font-size:64px; } .soon .t { font-size:22px; font-weight:700; margin-top:8px; }
+
+  .bal { display:flex; align-items:center; gap:10px; }
+  .depbtn { margin:0; width:auto; max-width:none; padding:4px 12px; font-size:13px; border-radius:14px; border:1px solid var(--cyan); background:#19d3c522; }
+  .mini { margin:0; width:auto; max-width:none; padding:6px 10px; font-size:14px; border-radius:8px; }
+  .nav.sub.g { flex-wrap:wrap; } .nav.sub.g div { flex:1 1 45%; }
+
+  .ttt { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px auto 0; max-width:260px; }
+  .cell { aspect-ratio:1; border-radius:12px; background:#ffffff12; border:2px solid #ffffff22; display:flex; align-items:center;
+          justify-content:center; font-size:44px; font-weight:800; cursor:pointer; user-select:none; }
+  .cell.x { color:var(--cyan); text-shadow:0 0 12px var(--cyan); animation:cellpop .25s ease-out; }
+  .cell.o { color:var(--pink); text-shadow:0 0 12px var(--pink); animation:cellpop .25s ease-out; }
+  .cell.dis { cursor:default; }
+  @keyframes cellpop { from { transform:scale(.3); opacity:0; } to { transform:scale(1); opacity:1; } }
+
+  .shells { display:flex; justify-content:space-around; margin:18px 0 6px; height:130px; }
+  .slot { position:relative; width:30%; cursor:pointer; }
+  .ball { position:absolute; left:50%; bottom:6px; width:26px; height:26px; margin-left:-13px; border-radius:50%; opacity:0; transition:opacity .3s;
+          background:radial-gradient(circle at 30% 30%,#fff,#ff5a8a 60%,#a3123f); }
+  .slot.showball .ball { opacity:1; }
+  .cup { position:absolute; left:50%; bottom:0; width:86px; height:96px; margin-left:-43px; transition:transform .5s;
+         background:linear-gradient(90deg,#8a5a2b,#e0a35a 45%,#8a5a2b); clip-path:polygon(22% 0,78% 0,100% 100%,0 100%); }
+  .slot.up .cup { transform:translateY(-66px); }
+  .slot.pick .cup { background:linear-gradient(90deg,#1b8f86,#5ff0e2 45%,#1b8f86); }
+  .shells.shake .cup { animation:shake .12s infinite alternate; }
+  @keyframes shake { from { transform:translateX(-8px); } to { transform:translateX(8px); } }
+
+  .ov { position:fixed; inset:0; z-index:50; display:none; align-items:center; justify-content:center; padding:20px;
+        background:#05051099; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
+  .ov.on { display:flex; animation:fadein .35s ease-out; }
+  @keyframes fadein { from { opacity:0; } to { opacity:1; } }
+  .modal { position:relative; width:100%; max-width:340px; padding:26px 20px 20px; border-radius:22px; text-align:center;
+           background:linear-gradient(160deg,#241a5a,#10102a); box-shadow:0 0 40px #7a3cff66; }
+  .modal.pop { animation:modalin .6s cubic-bezier(.2,1.3,.3,1); }
+  @keyframes modalin { from { opacity:0; transform:translateY(40px) scale(.7) rotate(-3deg); filter:blur(8px); } to { opacity:1; transform:none; filter:none; } }
+  .modal::before { content:""; position:absolute; inset:-2px; border-radius:24px; z-index:-1;
+                   background:linear-gradient(120deg,var(--cyan),var(--pink),#ffd76a,var(--cyan)); background-size:300% 300%; animation:flow 4s linear infinite; }
+  @keyframes flow { to { background-position:300% 0; } }
+  .modal button { margin-top:14px; }
+  .sparks { position:absolute; inset:0; overflow:hidden; border-radius:22px; pointer-events:none; }
+  .sp { position:absolute; bottom:-10px; font-size:18px; opacity:0; animation:rise 3s ease-in infinite; }
+  @keyframes rise { 0% { opacity:0; transform:translateY(0); } 20% { opacity:1; } 100% { opacity:0; transform:translateY(-320px) rotate(40deg); } }
+  .pu-icon { font-size:56px; animation:bob 2s ease-in-out infinite; }
+  @keyframes bob { 50% { transform:translateY(-8px) scale(1.08); } }
+  .pu-title { font-size:20px; font-weight:800; margin-top:6px; background:linear-gradient(90deg,var(--cyan),var(--pink));
+              -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .pu-text { margin-top:10px; font-size:16px; line-height:1.5; white-space:pre-line; word-break:break-word; animation:fadein 1s .3s both; }
+  .wallet { margin-top:8px; padding:10px; border-radius:10px; background:#00000066; border:1px dashed var(--cyan); font-size:13px; word-break:break-all; user-select:all; }
+  .big-usdt { font-size:30px; font-weight:800; color:var(--cyan); margin-top:6px; }
+  .cx { position:absolute; top:10px; right:16px; font-size:18px; opacity:.7; cursor:pointer; z-index:2; }
+  .cbody { max-height:62vh; overflow-y:auto; }
 </style>
 </head>
 <body>
 <div class="nav"><div id="n1" class="on"><b>🎰</b>Рулетка</div><div id="n2"><b>🎮</b>Игры</div><div id="n4"><b>📜</b>Квесты</div><div id="n3" style="display:none"><b>🛠</b>Админ</div></div>
-<div id="balbox" class="bal">🪙 <span id="bal">0</span></div>
+<div id="balbox" class="bal"><span>🪙 <span id="bal">0</span></span><button id="dep_open" class="depbtn">💳 Касса</button></div>
 
 <div id="p1" class="page on">
 <h1>Воу! Рулетка для своїх готова!</h1>
@@ -94,7 +144,7 @@
 </div>
 
 <div id="p2" class="page">
-  <div class="nav sub" style="margin-top:8px"><div id="sw1" class="on">🥟 Пельмень/Тапок</div><div id="sw2">🃏 Блэкджек</div></div>
+  <div class="nav sub g" style="margin-top:8px"><div id="sw1" class="on">🥟 Пельмень/Тапок</div><div id="sw2">🃏 Блэкджек</div><div id="sw3">❌⭕ Крестики-нолики</div><div id="sw4">🥤 Наперстки</div></div>
 
   <div class="card" id="gc1">
     <h2>🥟 Пельмень или 🩴 Тапок</h2>
@@ -122,6 +172,32 @@
     <div class="msg" id="bjmsg"></div>
     <div style="opacity:.6;font-size:13px;text-align:center">Блэкджек платит 3:2, дилер берёт до 17, ничья возвращает ставку.</div>
   </div>
+
+  <div class="card" id="gc3" style="display:none">
+    <h2>❌⭕ Крестики-нолики</h2>
+    <div class="ttt" id="ttt_grid"></div>
+    <div id="ttt_bet_box">
+      <input id="tttbet" type="number" inputmode="numeric" min="1" placeholder="Ставка" value="10">
+      <div class="quick" data-for="tttbet"><span data-q="10">10</span><span data-q="100">100</span><span data-q="half">½</span><span data-q="all">Все</span></div>
+      <button id="ttt_start" style="margin-top:14px">Начать игру</button>
+    </div>
+    <div class="msg" id="tttmsg"></div>
+    <div style="opacity:.6;font-size:13px;text-align:center">Вы ходите первым (✕). Победа — ставка x2, ничья — ставка возвращается. Бот иногда ошибается, но не всегда 😉</div>
+  </div>
+
+  <div class="card" id="gc4" style="display:none">
+    <h2>🥤 Наперстки</h2>
+    <div class="hl" style="text-align:center">Где шарик? Нажмите на стаканчик</div>
+    <div class="shells" id="shells">
+      <div class="slot"><div class="ball"></div><div class="cup"></div></div>
+      <div class="slot"><div class="ball"></div><div class="cup"></div></div>
+      <div class="slot"><div class="ball"></div><div class="cup"></div></div>
+    </div>
+    <input id="shbet" type="number" inputmode="numeric" min="1" placeholder="Ставка" value="10">
+    <div class="quick" data-for="shbet"><span data-q="10">10</span><span data-q="100">100</span><span data-q="half">½</span><span data-q="all">Все</span></div>
+    <div class="msg" id="shmsg"></div>
+    <div style="opacity:.6;font-size:13px;text-align:center">Угадал — выплата x2.7 от ставки (шанс 1 из 3). Не угадал — ставка сгорает.</div>
+  </div>
 </div>
 
 <div id="p4" class="page">
@@ -129,7 +205,7 @@
 </div>
 
 <div id="p3" class="page">
-  <div class="nav sub" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div></div>
+  <div class="nav sub" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div><div id="a4">✨ Окно</div></div>
 
   <div id="ap1" style="width:100%;display:flex;flex-direction:column;align-items:center">
     <div class="card"><h2>📊 Статистика</h2><div id="stats">…</div><div class="top" id="top"></div></div>
@@ -140,6 +216,7 @@
       <button id="ga_btn" style="margin-top:12px">Раздать</button>
       <div class="msg" id="ga_msg"></div>
     </div>
+    <div class="card"><h2>💸 Заявки на пополнение</h2><div id="dep_list">…</div></div>
     <div class="card"><h2>🧾 Последние операции</h2><div id="log">…</div></div>
   </div>
 
@@ -168,6 +245,71 @@
       <button id="b_btn" class="pink" style="margin-top:12px">Отправить всем</button>
       <div class="msg" id="b_msg"></div>
     </div>
+  </div>
+
+  <div id="ap4" style="width:100%;display:none;flex-direction:column;align-items:center">
+    <div class="card">
+      <h2>✨ Всплывающее сообщение</h2>
+      <input id="pp_icon" maxlength="8" placeholder="Эмодзи (например 🎉)" value="📢">
+      <input id="pp_title" maxlength="80" placeholder="Заголовок (необязательно)">
+      <textarea id="pp_text" maxlength="600" placeholder="Текст — красиво появится на экране у игроков"></textarea>
+      <input id="pp_target" placeholder="Кому: ID или @username (пусто = всем)">
+      <div class="btnrow">
+        <button id="pp_prev">👁 Предпросмотр</button><button id="pp_btn" class="pink">🚀 Отправить</button>
+      </div>
+      <div class="msg" id="pp_msg"></div>
+      <div class="info">Игрок увидит окно сразу, если приложение открыто, или при следующем входе (в течение 3 дней).</div>
+    </div>
+  </div>
+</div>
+
+<div class="ov" id="dep_ov">
+  <div class="modal pop">
+    <div class="cx" id="c_x">✕</div>
+    <div class="pu-title" style="margin:0 0 12px">💳 Касса</div>
+    <div class="nav sub" style="margin:0 0 10px"><div id="ct1">📜 История</div><div id="ct2" class="on">⬇️ Депозит</div><div id="ct3">⬆️ Вывод</div></div>
+    <div class="cbody">
+      <div id="cp1" style="display:none"><div id="ch_list" style="text-align:left">…</div></div>
+      <div id="cp2">
+        <div id="dep1">
+          <input id="dep_amount" type="number" inputmode="numeric" min="25" placeholder="Сколько монет (от 25)" style="text-align:center">
+          <div class="info" style="opacity:.7">1 USDT = 25 🪙</div>
+          <button id="dep_next">Продолжить</button>
+          <div class="msg" id="dep_msg"></div>
+        </div>
+        <div id="dep2" style="display:none">
+          <div class="info">Для пополнения на <b id="dep_coins"></b> 🪙 отправьте ровно</div>
+          <div class="big-usdt"><span id="dep_usdt">0</span> USDT</div>
+          <div class="info">Сеть: <b id="dep_net"></b></div>
+          <div class="wallet" id="dep_wallet"></div>
+          <button id="dep_copy">📋 Скопировать адрес</button>
+          <button id="dep_paid" class="pink">✅ Я оплатил</button>
+          <button id="dep_back" style="border-color:#ffffff44;background:#ffffff0d">Назад</button>
+          <div class="msg" id="dep_msg2"></div>
+          <div class="info" style="opacity:.6;font-size:12px">Монеты зачисляются администратором после проверки перевода. Отправляйте только USDT в сети TRC20 — переводы в других сетях не вернуть.</div>
+        </div>
+      </div>
+      <div id="cp3" style="display:none">
+        <div class="info">Баланс: <b id="wd_bal">0</b> 🪙</div>
+        <input id="wd_coins" type="number" inputmode="numeric" min="25" placeholder="Сколько монет вывести (от 25)" style="text-align:center">
+        <div class="big-usdt" style="font-size:24px"><span id="wd_usdt">0.00</span> USDT</div>
+        <div class="info" style="opacity:.7">1 USDT = 25 🪙 · сеть TRC20</div>
+        <input id="wd_wallet" placeholder="Ваш кошелёк USDT (TRC20)" style="font-size:14px;text-align:center" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button id="wd_send" class="pink">Вывести</button>
+        <div class="msg" id="wd_msg" style="white-space:pre-line"></div>
+        <div class="info" style="opacity:.6;font-size:12px">Монеты списываются сразу. Если заявку отклонят — они вернутся на баланс.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="ov" id="pu_ov">
+  <div class="modal" id="pu_modal">
+    <div class="sparks" id="pu_sparks"></div>
+    <div class="pu-icon" id="pu_icon">📢</div>
+    <div class="pu-title" id="pu_title"></div>
+    <div class="pu-text" id="pu_text"></div>
+    <button id="pu_ok">Понятно</button>
   </div>
 </div>
 
@@ -261,8 +403,8 @@ const $ = id => document.getElementById(id);
 function setBal(v) { $("bal").textContent = v.toLocaleString("ru-RU"); window._bal = v; }
 function showPage(n) {
   [1,2,3,4].forEach(i => { $("p"+i).classList.toggle("on", i===n); $("n"+i).classList.toggle("on", i===n); });
-  $("balbox").style.display = (n===1 || n===2) ? "block" : "none";
-  if (n===3) { loadStats(); loadLog(); }
+  $("balbox").style.display = (n===1 || n===2) ? "flex" : "none";
+  if (n===3) { loadStats(); loadLog(); loadDeposits(); }
 }
 [1,2,3,4].forEach(i => $("n"+i).onclick = () => showPage(i));
 async function post(path, extra) {
@@ -307,10 +449,10 @@ $("flip").onclick = async () => {
 
 // ---------- переключатель игр ----------
 function showGame(n) {
-  $("gc1").style.display = n===1 ? "block" : "none"; $("gc2").style.display = n===2 ? "block" : "none";
-  $("sw1").classList.toggle("on", n===1); $("sw2").classList.toggle("on", n===2);
+  [1,2,3,4].forEach(i => { $("gc"+i).style.display = i===n ? "block" : "none"; $("sw"+i).classList.toggle("on", i===n); });
+  if (n===3) tttLoad();
 }
-$("sw1").onclick = () => showGame(1); $("sw2").onclick = () => showGame(2);
+[1,2,3,4].forEach(i => $("sw"+i).onclick = () => showGame(i));
 
 // ---------- Блэкджек ----------
 function cardEl(c) {
@@ -360,8 +502,8 @@ async function bjLoad() { const { status, data } = await post("/api/bj/state"); 
 // ---------- админка ----------
 const fmtTime = ts => new Date(ts*1000).toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
 const confirmTg = text => new Promise(res => tg.showConfirm ? tg.showConfirm(text, res) : res(confirm(text)));
-[1,2,3].forEach(i => $("a"+i).onclick = () => {
-  [1,2,3].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
+[1,2,3,4].forEach(i => $("a"+i).onclick = () => {
+  [1,2,3,4].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
 });
 async function loadStats() {
   const { status, data } = await post("/api/admin/stats");
@@ -452,6 +594,230 @@ $("b_btn").onclick = async () => {
   else $("b_msg").textContent = "❌ " + (data.error || "Ошибка");
 };
 
+
+// ---------- Крестики-нолики ----------
+let tttBusy = false, tttActive = false;
+function renderTTT(st) {
+  const g = $("ttt_grid"); g.replaceChildren();
+  st.board.forEach((c, i) => {
+    const d = document.createElement("div");
+    d.className = "cell" + (c==="X" ? " x" : c==="O" ? " o" : "") + (!st.active || c!=="-" ? " dis" : "");
+    d.textContent = c==="X" ? "✕" : c==="O" ? "◯" : "";
+    d.onclick = () => tttMove(i);
+    g.appendChild(d);
+  });
+  setBal(st.balance); tttActive = st.active;
+  $("ttt_bet_box").style.display = st.active ? "none" : "block";
+  if (st.active) { $("tttmsg").textContent = "Ваш ход — вы ✕"; return; }
+  if (st.outcome) {
+    const net = st.payout - st.bet;
+    $("tttmsg").textContent = { win: `🎉 Победа! +${net} 🪙`, push: "🤝 Ничья, ставка возвращена", lose: `💀 Проигрыш −${st.bet} 🪙` }[st.outcome];
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(st.outcome==="lose" ? "error" : st.outcome==="push" ? "warning" : "success");
+  } else $("tttmsg").textContent = "";
+}
+function tttErr(data) {
+  if (data.balance !== undefined) setBal(data.balance);
+  $("tttmsg").textContent = data.error === "banned" ? "Вам закрыт доступ к играм 🚫"
+    : data.error === "no_money" ? "Недостаточно монет 🪙"
+    : data.error === "already_active" ? "У вас уже идёт партия" : "Ошибка, попробуйте позже";
+  if (data.error === "already_active" || data.error === "no_game") tttLoad();
+}
+async function tttLoad() {
+  const { status, data } = await post("/api/ttt/state");
+  if (status === 200 && data.active) renderTTT(data);
+  else if (!tttActive) renderTTT({ board: Array(9).fill("-"), active: false, balance: status === 200 ? data.balance : (window._bal||0) });
+}
+$("ttt_start").onclick = async () => {
+  if (tttBusy) return;
+  const bet = parseInt($("tttbet").value, 10);
+  if (!bet || bet < 1) { $("tttmsg").textContent = "Введи ставку"; return; }
+  if (bet > (window._bal||0)) { $("tttmsg").textContent = "Недостаточно монет 🪙"; return; }
+  tttBusy = true;
+  const { status, data } = await post("/api/ttt/start", { bet });
+  tttBusy = false;
+  status === 200 ? renderTTT(data) : tttErr(data);
+};
+async function tttMove(i) {
+  if (!tttActive || tttBusy) return;
+  tttBusy = true;
+  const { status, data } = await post("/api/ttt/move", { cell: i });
+  tttBusy = false;
+  status === 200 ? renderTTT(data) : tttErr(data);
+}
+
+// ---------- Наперстки ----------
+let shellBusy = false;
+const slots = [...document.querySelectorAll(".slot")];
+slots.forEach((s, i) => s.onclick = async () => {
+  if (shellBusy) return;
+  const bet = parseInt($("shbet").value, 10);
+  if (!bet || bet < 1) { $("shmsg").textContent = "Введи ставку"; return; }
+  if (bet > (window._bal||0)) { $("shmsg").textContent = "Недостаточно монет 🪙"; return; }
+  shellBusy = true; $("shmsg").textContent = "";
+  slots.forEach(x => x.classList.remove("up", "showball", "pick")); s.classList.add("pick");
+  const { status, data } = await post("/api/shell", { bet, cup: i });
+  if (status !== 200) {
+    $("shmsg").textContent = data.error === "banned" ? "Вам закрыт доступ к играм 🚫" : data.error === "no_money" ? "Недостаточно монет 🪙" : "Ошибка, попробуйте позже";
+    if (data.balance !== undefined) setBal(data.balance);
+    shellBusy = false; return;
+  }
+  $("shells").classList.add("shake");
+  setTimeout(() => {
+    $("shells").classList.remove("shake");
+    slots[data.ball].classList.add("showball"); slots.forEach(x => x.classList.add("up"));
+    setBal(data.balance);
+    $("shmsg").textContent = data.won ? `🎉 Угадали! +${data.payout - bet} 🪙` : `💀 Мимо! −${bet} 🪙`;
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(data.won ? "success" : "error");
+    shellBusy = false;
+  }, 1100);
+});
+
+// ---------- Пополнение ----------
+let depId = null;
+const depStep = n => { $("dep1").style.display = n===1 ? "block" : "none"; $("dep2").style.display = n===2 ? "block" : "none"; };
+$("dep_open").onclick = () => { depStep(1); $("dep_amount").value = ""; $("dep_msg").textContent = ""; $("dep_msg2").textContent = ""; $("dep_paid").disabled = false; cashTab(2); $("dep_ov").classList.add("on"); };
+$("c_x").onclick = () => $("dep_ov").classList.remove("on");
+$("dep_back").onclick = () => depStep(1);
+$("dep_next").onclick = async () => {
+  const amount = parseInt($("dep_amount").value, 10);
+  if (!amount || amount < 25) { $("dep_msg").textContent = "Минимум 25 монет (1 USDT)"; return; }
+  $("dep_next").disabled = true;
+  const { status, data } = await post("/api/deposit/create", { amount });
+  $("dep_next").disabled = false;
+  if (status !== 200) { $("dep_msg").textContent = data.error === "banned" ? "Доступ закрыт 🚫" : (data.error || "Ошибка, попробуйте позже"); return; }
+  depId = data.id; $("dep_coins").textContent = data.amount; $("dep_usdt").textContent = data.usdt; $("dep_net").textContent = data.network; $("dep_wallet").textContent = data.wallet;
+  depStep(2);
+};
+$("dep_copy").onclick = async () => {
+  const w = $("dep_wallet").textContent;
+  try { await navigator.clipboard.writeText(w); }
+  catch (e) { const r = document.createRange(); r.selectNodeContents($("dep_wallet")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.execCommand("copy"); }
+  $("dep_msg2").textContent = "Адрес скопирован ✅";
+};
+$("dep_paid").onclick = async () => {
+  $("dep_paid").disabled = true;
+  const { status, data } = await post("/api/deposit/paid", { id: depId });
+  $("dep_msg2").textContent = status === 200 ? "✅ Заявка отправлена администратору. Монеты придут после проверки перевода." : "❌ " + (data.error || "Ошибка");
+  if (status !== 200) $("dep_paid").disabled = false;
+};
+
+// ---------- Всплывающие сообщения ----------
+let puQueue = [], puShowing = false;
+function showNextPopup() {
+  const it = puQueue.shift();
+  if (!it) { puShowing = false; return; }
+  puShowing = true;
+  $("pu_icon").textContent = it.icon || "📢";
+  $("pu_title").textContent = it.title || ""; $("pu_title").style.display = it.title ? "block" : "none";
+  $("pu_text").textContent = it.text;
+  const sp = $("pu_sparks"); sp.replaceChildren();
+  for (let i = 0; i < 12; i++) {
+    const e = document.createElement("span"); e.className = "sp"; e.textContent = ["✨","⭐","💫"][i % 3];
+    e.style.left = Math.random()*92 + "%"; e.style.animationDelay = (Math.random()*3) + "s"; sp.appendChild(e);
+  }
+  const m = $("pu_modal"); m.classList.remove("pop"); void m.offsetWidth; m.classList.add("pop");
+  $("pu_ov").classList.add("on");
+  tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("success");
+  if (it.id) post("/api/popups/seen", { ids: [it.id] });
+}
+$("pu_ok").onclick = () => { $("pu_ov").classList.remove("on"); setTimeout(showNextPopup, 350); };
+async function pollPopups() {
+  const { status, data } = await post("/api/popups");
+  if (status !== 200) return;
+  data.items.forEach(it => { if (!puQueue.some(x => x.id === it.id)) puQueue.push(it); });
+  if (!puShowing) showNextPopup();
+}
+setInterval(pollPopups, 15000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollPopups(); });
+
+// ---------- админка: заявки и всплывашки ----------
+async function loadDeposits() {
+  const { status, data } = await post("/api/admin/deposits");
+  if (status !== 200) return;
+  const box = $("dep_list"); box.innerHTML = data.items.length ? "" : "Нет заявок";
+  data.items.forEach(it => {
+    const row = document.createElement("div"); row.className = "logrow";
+    const l = document.createElement("div"); l.textContent = `#${it.id} · ${it.usdt} USDT → ${it.amount} 🪙 · ` + (it.name || it.user_id) + (it.username ? " @"+it.username : "");
+    const sm = document.createElement("small"); sm.textContent = fmtTime(it.ts) + " · id " + it.user_id; l.appendChild(sm);
+    const b = document.createElement("div"); b.style.cssText = "display:flex;gap:6px";
+    const ok = document.createElement("button"); ok.className = "mini"; ok.textContent = "✅";
+    const no = document.createElement("button"); no.className = "mini pink"; no.textContent = "❌";
+    ok.onclick = async () => { if (await confirmTg(`Зачислить ${it.amount} 🪙 игроку?`)) depDecide(it.id, true); };
+    no.onclick = async () => { if (await confirmTg("Отклонить заявку?")) depDecide(it.id, false); };
+    b.append(ok, no); row.append(l, b); box.appendChild(row);
+  });
+}
+async function depDecide(id, ok) {
+  const { status, data } = await post("/api/admin/deposit_ok", { id, ok });
+  if (status !== 200) alert(data.error || "Ошибка");
+  loadDeposits(); loadStats(); loadLog();
+}
+const ppItem = () => ({ id: 0, icon: $("pp_icon").value.trim() || "📢", title: $("pp_title").value.trim(), text: $("pp_text").value.trim() });
+$("pp_prev").onclick = () => {
+  const it = ppItem(); if (!it.text) { $("pp_msg").textContent = "Введи текст"; return; }
+  puQueue.push(it); if (!puShowing) showNextPopup();
+};
+$("pp_btn").onclick = async () => {
+  const it = ppItem(), target = $("pp_target").value.trim();
+  if (!it.text) { $("pp_msg").textContent = "Введи текст"; return; }
+  if (!await confirmTg(target ? `Показать окно игроку ${target}?` : "Показать окно ВСЕМ игрокам?")) return;
+  $("pp_btn").disabled = true;
+  const { status, data } = await post("/api/admin/popup", { ...it, target });
+  $("pp_btn").disabled = false;
+  if (status === 200) { $("pp_msg").textContent = `✅ Отправлено: ${data.name}`; $("pp_text").value = ""; $("pp_title").value = ""; }
+  else $("pp_msg").textContent = "❌ " + (data.error || "Ошибка");
+};
+
+// ---------- Касса: вкладки, история, вывод ----------
+function cashTab(n) {
+  [1,2,3].forEach(i => { $("cp"+i).style.display = i===n ? "block" : "none"; $("ct"+i).classList.toggle("on", i===n); });
+  if (n===1) loadCashHistory();
+  if (n===3) { $("wd_bal").textContent = (window._bal||0).toLocaleString("ru-RU"); $("wd_msg").textContent = ""; }
+}
+[1,2,3].forEach(i => $("ct"+i).onclick = () => cashTab(i));
+const CH_ST = {
+  deposit:  { claimed: "⏳ Проверяется", done: "✅ Зачислено", rejected: "❌ Отклонено" },
+  withdraw: { pending: "⏳ Ожидает", approved: "✅ Одобрено", rejected: "❌ Отклонено", frozen: "🧊 Заморожено" },
+};
+async function loadCashHistory() {
+  const { status, data } = await post("/api/cashier/history");
+  const box = $("ch_list"); if (status !== 200) { box.textContent = "Ошибка, попробуйте позже"; return; }
+  box.innerHTML = data.items.length ? "" : "<div style='text-align:center;opacity:.6'>Операций пока нет</div>";
+  data.items.forEach(it => {
+    const row = document.createElement("div"); row.className = "logrow";
+    const l = document.createElement("div"); l.textContent = it.kind === "deposit" ? "⬇️ Депозит" : "⬆️ Вывод";
+    const sm = document.createElement("small");
+    sm.textContent = fmtTime(it.ts) + " · " + (CH_ST[it.kind][it.status] || it.status) + (it.reason ? " · " + it.reason : "");
+    l.appendChild(sm);
+    const r = document.createElement("div"); r.style.textAlign = "right";
+    const b = document.createElement("b"); b.textContent = (it.kind === "deposit" ? "+" : "−") + it.coins + " 🪙";
+    b.style.color = it.kind === "deposit" ? "#4ade80" : "#f87171";
+    const u = document.createElement("small"); u.textContent = it.usdt + " USDT";
+    r.append(b, u); row.append(l, r); box.appendChild(row);
+  });
+}
+$("wd_coins").oninput = () => { const c = parseInt($("wd_coins").value, 10) || 0; $("wd_usdt").textContent = (c*4/100).toFixed(2); };
+$("wd_send").onclick = async () => {
+  const coins = parseInt($("wd_coins").value, 10), wallet = $("wd_wallet").value.trim(), m = $("wd_msg");
+  if (!coins || coins < 25) { m.textContent = "Минимум 25 монет (1 USDT)"; return; }
+  if (coins > (window._bal||0)) { m.textContent = "Недостаточно монет 🪙"; return; }
+  if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(wallet)) { m.textContent = "Проверьте адрес TRC20: начинается с T, 34 символа"; return; }
+  $("wd_send").disabled = true;
+  const { status, data } = await post("/api/withdraw/create", { coins, wallet });
+  $("wd_send").disabled = false;
+  if (status === 200) {
+    setBal(data.balance); $("wd_bal").textContent = data.balance.toLocaleString("ru-RU");
+    $("wd_coins").value = ""; $("wd_usdt").textContent = "0.00";
+    m.textContent = `✅ Запрос принят, ожидайте\n${data.coins} 🪙 → ${data.usdt} USDT`;
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("success");
+  } else {
+    if (data.balance !== undefined) setBal(data.balance);
+    m.textContent = "❌ " + (data.error || "Ошибка, попробуйте позже");
+  }
+};
+
+tttLoad();
+pollPopups();
 bjLoad();
 init();
 </script>
