@@ -123,8 +123,8 @@
   .cx { position:absolute; top:10px; right:16px; font-size:18px; opacity:.7; cursor:pointer; z-index:2; }
   .cbody { max-height:62vh; overflow-y:auto; }
   /* ---- слоты ---- */
-  .slpick { display:flex; gap:6px; margin-top:6px; }
-  .slchip { flex:1; text-align:center; padding:8px 2px 6px; border:2px solid #ffffff33; border-radius:12px; font-size:12px; line-height:1.25; cursor:pointer; user-select:none; }
+  .slpick { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .slchip { flex:1 1 22%; text-align:center; padding:8px 2px 6px; border:2px solid #ffffff33; border-radius:12px; font-size:12px; line-height:1.25; cursor:pointer; user-select:none; }
   .slchip span { display:block; font-size:26px; line-height:1.2; }
   .slchip small { display:block; opacity:.6; font-size:11px; margin-top:1px; }
   .slchip.on { border-color:var(--pink); background:#ff2fa022; }
@@ -228,6 +228,14 @@
   .t-bj   { background:linear-gradient(150deg,#12724a,#04261a); }
   .t-ttt  { background:linear-gradient(150deg,#5b2fc0,#1a0b4a); }
   .t-shl  { background:linear-gradient(150deg,#2b6b9a,#0a2238); }
+  .t-pha  { background:linear-gradient(150deg,#c98a1a,#3d2504); }
+  .t-spc  { background:linear-gradient(150deg,#3a2bb0,#07062a); }
+  .t-cdy  { background:linear-gradient(150deg,#d6338f,#43102f); }
+  .t-sh   { background:linear-gradient(150deg,#d9351b,#3d0a05); }
+  .t-cs   { background:linear-gradient(150deg,#d4a017,#2a1d02); border-color:#ffd76a99; }
+  .grid > .tile:last-child:nth-child(odd) { grid-column:span 2; }
+  .sy.dim { opacity:.22; background:#00000055; }
+  .sy.coin .mb { right:2px; bottom:2px; }
 
   /* нижняя навигация */
   .bnav { position:fixed; left:0; right:0; bottom:0; z-index:20; display:flex; justify-content:center; gap:6px;
@@ -328,6 +336,11 @@
     <div class="tile t-pel" data-open="5" data-slot="pelmen"><span class="bd">WILD</span><div class="ic">🥟</div><div class="tt">Пельмень-Мания</div><div class="ts">5×3 · 10 линий · x800</div></div>
     <div class="tile t-fru" data-open="5" data-slot="fruit"><div class="ic">🍒</div><div class="tt">Фруктовый</div><div class="ts">3×3 · 5 линий · x375</div></div>
     <div class="tile t-cls" data-open="5" data-slot="classic"><span class="bd">JACKPOT</span><div class="ic">7️⃣</div><div class="tt">Классика 777</div><div class="ts">3 барабана · x195</div></div>
+    <div class="tile t-pha" data-open="5" data-slot="pharaoh"><span class="bd hot">NEW</span><div class="ic">🏺</div><div class="tt">Золото Фараона</div><div class="ts">5×3 · 10 линий · x900</div></div>
+    <div class="tile t-spc" data-open="5" data-slot="space"><span class="bd hot">NEW</span><div class="ic">🚀</div><div class="tt">Космо-Рейс</div><div class="ts">4×3 · 8 линий · x300</div></div>
+    <div class="tile t-cdy" data-open="5" data-slot="candy"><span class="bd hot">NEW</span><div class="ic">🍭</div><div class="tt">Сладкая жизнь</div><div class="ts">3×3 · 9 линий · x400</div></div>
+    <div class="tile t-sh" data-open="5" data-slot="superhot"><span class="bd hot">27 ЛИНИЙ</span><div class="ic">🔥</div><div class="tt">Супер Хот</div><div class="ts">3×3 · 27 линий · ⭐ скаттер</div></div>
+    <div class="tile t-cs" data-open="5" data-slot="coinstrike"><span class="bd hot">HOLD &amp; WIN</span><div class="ic">💰</div><div class="tt">Монетный удар</div><div class="ts">3×3 · респины · GRAND x500</div></div>
   </div>
 
   <div class="sec">🎲 Игры</div>
@@ -1130,15 +1143,28 @@ function slSelect(k) {
   slTurboUI();
   const pt = $("sl_pay"); pt.innerHTML = "";
   c.symbols.forEach(sym => {
+    if (!c.pay[sym]) return;                          // монета/скаттер описаны отдельно
     const row = document.createElement("div"); row.className = "logrow";
     const a = document.createElement("span"); a.append(slLabel(sym)); if (sym === c.wild) a.append(" (дикий)");
     const b = document.createElement("span");
     b.textContent = Object.keys(c.pay[sym]).map(Number).sort((x, y) => x - y).map(n => `${n} шт — x${c.pay[sym][n]}`).join(" · ");
     row.append(a, b); pt.appendChild(row);
   });
+  if (c.scatter) {
+    const row = document.createElement("div"); row.className = "logrow";
+    const a = document.createElement("span"); a.append(slLabel(c.scatter.sym), " (скаттер)");
+    const b = document.createElement("span");
+    b.textContent = Object.keys(c.scatter.pay).map(Number).sort((x, y) => x - y).map(n => `${n} шт — x${c.scatter.pay[n]} ставки`).join(" · ");
+    row.append(a, b); pt.appendChild(row);
+  }
   const note = document.createElement("div"); note.style.cssText = "opacity:.6;margin-top:6px";
   note.textContent = "x — множитель ставки на одну линию.";
   pt.appendChild(note);
+  if (c.hold) {
+    const hn = document.createElement("div"); hn.style.cssText = "margin-top:8px;line-height:1.5";
+    hn.textContent = `🔒 Hold & Win: 5+ монет ${c.coin} на поле → монеты фиксируются, 3 респина (каждая новая монета их обновляет). Номиналы x1–x25 от ставки, джекпоты: ${c.jackpots.map(j => j[0] + " x" + j[1]).join(", ")}. GRAND — когда заполнены все 9 клеток.`;
+    pt.appendChild(hn);
+  }
   if (c.bonus) {
     const bn = document.createElement("div"); bn.style.cssText = "margin-top:8px;line-height:1.5";
     bn.textContent = `🎁 Бонус: собака на 1-м, 3-м и 5-м барабанах → ${c.bonus_spins} вращений. В бонусе лепреконы падают часто и несут иксы (${c.mults.map(m => "x" + m).join(", ")}). Иксы лепреконов на линии перемножаются.`;
@@ -1229,6 +1255,41 @@ async function slSpin() {
     }
     setBal(data.balance);
     bb.textContent = `🎁 Бонус завершён: +${data.bonus.total.toLocaleString("ru-RU")} 🪙`;
+    win.className = "slwin big"; win.textContent = `🏆 ИТОГО +${data.payout.toLocaleString("ru-RU")} 🪙 (x${Math.round(data.payout / bet * 10) / 10})`;
+    msg.textContent = free ? (data.payout ? `🎁 Бесплатный бонус: +${data.payout.toLocaleString("ru-RU")} 🪙 на баланс` : "Бесплатный бонус без выигрыша")
+      : data.payout > bet ? `Чистыми: +${(data.payout - bet).toLocaleString("ru-RU")} 🪙` : `Вернулось ${data.payout} из ${bet} 🪙`;
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(data.payout > (free ? 0 : bet) ? "success" : "warning");
+    slOk = true; slBusy = false; $("sl_spin").disabled = false; return;
+  }
+  if (data.hold) {                                    // ===== Hold & Win =====
+    const H = data.hold, bb = $("sl_bonus"), balStart = data.balance - data.payout;
+    setBal(balStart + data.base_payout); hitWins(data.wins);
+    if (data.base_payout > 0) win.textContent = `+${data.base_payout} 🪙`;
+    tg.HapticFeedback && tg.HapticFeedback.notificationOccurred("success");
+    await wait(turbo ? 500 : 1200); clearHits(); win.textContent = "";
+    const cellAt = (r, ci) => slReels[ci].firstChild.children[r];
+    const putCoin = (r, ci, v, j, fresh) => {
+      const d = mkSym(c.coin); d.classList.add("coin"); if (fresh) d.classList.add("hit");
+      const b = document.createElement("span"); b.className = "mb"; b.textContent = j || ("x" + v);
+      if (j) b.style.fontSize = "calc(var(--cs)*.17)";
+      d.appendChild(b); cellAt(r, ci).replaceWith(d);
+    };
+    for (let r = 0; r < c.rows; r++) for (let ci = 0; ci < c.reels; ci++) { const d = mkSym("·"); d.classList.add("dim"); cellAt(r, ci).replaceWith(d); }
+    let sum = 0, cnt = 0;
+    const head = left => { bb.textContent = `🔒 HOLD & WIN · респины: ${left} · монет ${cnt}/9 · собрано ${(sum * bet).toLocaleString("ru-RU")} 🪙`; };
+    bb.style.display = "block";
+    H.initial.forEach(([r, ci, v, j]) => { putCoin(r, ci, v, j, false); sum += v; cnt++; });
+    head(3); await wait(turbo ? 500 : 1200);
+    for (const st of H.steps) {
+      slReels.forEach(rl => [...rl.firstChild.children].forEach(x => x.classList.remove("hit")));
+      st.new.forEach(([r, ci, v, j]) => { putCoin(r, ci, v, j, true); sum += v; cnt++; });
+      if (st.new.length) { tg.HapticFeedback && tg.HapticFeedback.impactOccurred("medium"); }
+      head(st.left);
+      await wait(st.new.length ? (turbo ? 450 : 1000) : (turbo ? 150 : 550));
+    }
+    slReels.forEach(rl => [...rl.firstChild.children].forEach(x => x.classList.remove("hit")));
+    setBal(data.balance);
+    bb.textContent = H.grand ? `🏆 GRAND! Заполнены все клетки · +${H.pay.toLocaleString("ru-RU")} 🪙` : `🔒 Hold & Win завершён: +${H.pay.toLocaleString("ru-RU")} 🪙`;
     win.className = "slwin big"; win.textContent = `🏆 ИТОГО +${data.payout.toLocaleString("ru-RU")} 🪙 (x${Math.round(data.payout / bet * 10) / 10})`;
     msg.textContent = free ? (data.payout ? `🎁 Бесплатный бонус: +${data.payout.toLocaleString("ru-RU")} 🪙 на баланс` : "Бесплатный бонус без выигрыша")
       : data.payout > bet ? `Чистыми: +${(data.payout - bet).toLocaleString("ru-RU")} 🪙` : `Вернулось ${data.payout} из ${bet} 🪙`;

@@ -1014,6 +1014,14 @@ def slot_spin(cfg: dict):
             p, n, sym = res
             wins.append({"line": li, "cells": [[line[c], c] for c in range(n)], "sym": sym, "pay": p})
             total += p
+    sc = cfg.get("scatter")   # скаттер: символ платит в любом месте поля, выплата — множитель ОБЩЕЙ ставки
+    if sc:
+        cells = [[r, c] for r in range(cfg["rows"]) for c in range(cfg["reels"]) if grid[r][c] == sc["sym"]]
+        ks = [k for k in sc["pay"] if k <= len(cells)]
+        if ks:
+            p = sc["pay"][max(ks)]
+            wins.append({"line": -1, "cells": cells, "sym": sc["sym"], "pay": p})
+            total += p * len(cfg["lines"])
     return grid, wins, total
 
 
@@ -1093,6 +1101,117 @@ def dogs_pick(cfg: dict, tries: int, bonus: bool = False):
 # ==== DOGS SLOT END ====
 
 
+# ==== NEW SLOTS BEGIN ====
+# 5) «Золото Фараона»: 5×3, 10 линий, дикое солнце, высокая волатильность
+SLOTS["pharaoh"] = {
+    "name": "Золото Фараона", "emoji": "🏺", "reels": 5, "rows": 3,
+    "lines": SLOTS["pelmen"]["lines"],
+    "strip": _strip({"🪲": 9, "🐍": 8, "🐪": 6, "🏺": 5, "👑": 3, "🔱": 2, "☀️": 2}, 55),
+    "wild": "☀️",
+    "pay": {"🪲": {3: 3, 4: 10, 5: 30}, "🐍": {3: 4, 4: 12, 5: 42}, "🐪": {3: 7, 4: 21, 5: 68},
+            "🏺": {3: 11, 4: 35, 5: 135}, "👑": {3: 22, 4: 90, 5: 340}, "🔱": {3: 45, 4: 170, 5: 900},
+            "☀️": {3: 45, 4: 170, 5: 900}},
+    "info": "5 барабанов × 3 ряда, 10 линий, выигрыш слева направо от 3 одинаковых. ☀️ — дикий, заменяет любой символ. Три 🔱 или три ☀️ на линии — x45, пять — x900!",
+}
+
+# 6) «Космо-Рейс»: 4 барабана × 3 ряда, 8 линий, дикая звезда
+SLOTS["space"] = {
+    "name": "Космо-Рейс", "emoji": "🚀", "reels": 4, "rows": 3,
+    "lines": [[1, 1, 1, 1], [0, 0, 0, 0], [2, 2, 2, 2], [0, 1, 2, 1], [2, 1, 0, 1],
+              [1, 0, 0, 1], [1, 2, 2, 1], [0, 0, 1, 2]],
+    "strip": _strip({"🌑": 8, "☄️": 7, "🛰️": 6, "👽": 4, "🛸": 3, "🚀": 2, "🌟": 2}, 66),
+    "wild": "🌟",
+    "pay": {"🌑": {3: 3, 4: 12}, "☄️": {3: 4, 4: 15}, "🛰️": {3: 6, 4: 25},
+            "👽": {3: 12, 4: 50}, "🛸": {3: 25, 4: 120}, "🚀": {3: 60, 4: 300},
+            "🌟": {3: 60, 4: 300}},
+    "info": "4 барабана × 3 ряда, 8 линий, выигрыш слева направо от 3 одинаковых. 🌟 — дикая звезда, заменяет любой символ. Четыре 🚀 — x300!",
+}
+
+# 7) «Сладкая жизнь»: 3×3, 9 линий, частые небольшие выигрыши
+SLOTS["candy"] = {
+    "name": "Сладкая жизнь", "emoji": "🍭", "reels": 3, "rows": 3,
+    "lines": [[0, 0, 0], [1, 1, 1], [2, 2, 2], [0, 1, 2], [2, 1, 0], [0, 1, 0], [2, 1, 2], [1, 0, 1], [1, 2, 1]],
+    "strip": _strip({"🍬": 8, "🍩": 7, "🧁": 6, "🍰": 4, "🍭": 2, "🍫": 1}, 77),
+    "wild": None,
+    "pay": {"🍬": {2: 2, 3: 10}, "🍩": {3: 13}, "🧁": {3: 18}, "🍰": {3: 45}, "🍭": {3: 130}, "🍫": {3: 400}},
+    "info": "3 барабана × 3 ряда, 9 линий. Две 🍬 слева — уже выигрыш, три 🍫 — джекпот x400!",
+}
+
+# 8) «Супер Хот»: 3×3, 27 линий (все возможные комбинации рядов), звезда-скаттер платит где угодно
+SLOTS["superhot"] = {
+    "name": "Супер Хот", "emoji": "🔥", "reels": 3, "rows": 3,
+    "lines": [[a, b, c] for a in range(3) for b in range(3) for c in range(3)],
+    "strip": _strip({"🍒": 7, "🍋": 7, "🍊": 6, "🍇": 5, "🍉": 4, "🔔": 3, "7️⃣": 2, "⭐": 2}, 88),
+    "wild": None,
+    "pay": {"🍒": {3: 16}, "🍋": {3: 21}, "🍊": {3: 32}, "🍇": {3: 48}, "🍉": {3: 84}, "🔔": {3: 210}, "7️⃣": {3: 850}},
+    "scatter": {"sym": "⭐", "pay": {3: 3, 4: 8, 5: 25, 6: 100, 7: 300, 8: 700, 9: 1500}},
+    "info": "3 барабана × 3 ряда, 27 линий — учитываются все комбинации рядов. ⭐ — скаттер: 3 и более звёзд в любом месте платят множитель общей ставки.",
+}
+
+# 9) «Монетный удар»: 3×3, 5 линий + Hold & Win
+#    5+ монет 💰 на поле -> респины: монеты фиксируются, на каждую новую монету респины обновляются до 3.
+#    У монеты номинал (x ставки) или джекпот MINI/MINOR/MAJOR. Заполнили все 9 клеток — GRAND.
+COIN_SYM = "💰"
+COIN_TRIGGER = 5
+COIN_RESPINS = 3
+COIN_LAND_P = 0.07                 # шанс монеты в пустой клетке на каждом респине
+COIN_VALS = [1, 2, 3, 5, 8, 10, 15, 25]
+COIN_VAL_W = [30, 24, 16, 12, 8, 5, 3, 2]
+COIN_JACKS = [("MINI", 20, 18), ("MINOR", 50, 7), ("MAJOR", 200, 2)]   # (имя, x ставки, вес на 1000 монет)
+COIN_GRAND = 500
+_coin_rand = random.SystemRandom()
+
+SLOTS["coinstrike"] = {
+    "name": "Монетный удар", "emoji": "💰", "reels": 3, "rows": 3,
+    "lines": [[0, 0, 0], [1, 1, 1], [2, 2, 2], [0, 1, 2], [2, 1, 0]],
+    "strip": _strip({"🍒": 7, "🍋": 6, "🍊": 5, "🔔": 3, "⭐": 2, "7️⃣": 1, COIN_SYM: 8}, 99),
+    "wild": None,
+    "pay": {"🍒": {3: 7}, "🍋": {3: 11}, "🍊": {3: 17}, "🔔": {3: 36}, "⭐": {3: 85}, "7️⃣": {3: 240}},
+    "hold": True,
+    "info": (f"3 барабана × 3 ряда, 5 линий. {COIN_TRIGGER}+ монет 💰 на поле — бонус Hold & Win: монеты фиксируются, "
+             f"у вас {COIN_RESPINS} респина (каждая новая монета их обновляет). Номиналы x1–x25, джекпоты MINI x20, "
+             f"MINOR x50, MAJOR x200, а все 9 монет — GRAND x{COIN_GRAND}!"),
+}
+
+
+def coin_roll():
+    """Одна монета -> (x ставки, название джекпота или '')."""
+    r = _coin_rand.randrange(1000)
+    for name, x, w in COIN_JACKS:
+        if r < w:
+            return x, name
+        r -= w
+    return _coin_rand.choices(COIN_VALS, weights=COIN_VAL_W)[0], ""
+
+
+def coin_spin(cfg: dict):
+    """Один запуск -> (сетка, выигрышные линии, сумма линий, hold или None). hold.total — в «ставках» (x общей ставки)."""
+    grid, wins, total = slot_spin(cfg)
+    cells = [(r, c) for r in range(3) for c in range(3) if grid[r][c] == COIN_SYM]
+    if len(cells) < COIN_TRIGGER:
+        return grid, wins, total, None
+    locked = {}
+    for r, c in cells:
+        locked[(r, c)] = coin_roll()
+    initial = [[r, c, v, j] for (r, c), (v, j) in locked.items()]
+    steps, left = [], COIN_RESPINS
+    while left > 0 and len(locked) < 9:
+        new = []
+        for r in range(3):
+            for c in range(3):
+                if (r, c) not in locked and _coin_rand.random() < COIN_LAND_P:
+                    locked[(r, c)] = coin_roll()
+                    new.append([r, c, *locked[(r, c)]])
+        left = COIN_RESPINS if new else left - 1
+        steps.append({"new": new, "left": left})
+    total_x = sum(v for v, _ in locked.values())
+    grand = len(locked) == 9
+    if grand:
+        total_x += COIN_GRAND
+    return grid, wins, total, {"initial": initial, "steps": steps, "total": total_x, "grand": grand}
+# ==== NEW SLOTS END ====
+
+
 def slot_public(key: str) -> dict:
     cfg = SLOTS[key]
     syms = sorted(cfg["pay"], key=lambda s: -max(cfg["pay"][s].values()))
@@ -1104,6 +1223,14 @@ def slot_public(key: str) -> dict:
     if cfg.get("bonus"):
         out["bonus_spins"] = BONUS_SPINS
         out["mults"] = WILD_MULTS
+    if cfg.get("scatter"):
+        out["scatter"] = cfg["scatter"]
+        out["symbols"] = syms + [cfg["scatter"]["sym"]]
+    if cfg.get("hold"):
+        out["hold"] = True
+        out["symbols"] = syms + [COIN_SYM]
+        out["coin"] = COIN_SYM
+        out["jackpots"] = [[n, x] for n, x, _ in COIN_JACKS] + [["GRAND", COIN_GRAND]]
     return out
 
 
@@ -1169,6 +1296,21 @@ async def slot_spin_api(req: Request):
             payout = min(base + (bonus["total"] if bonus else 0), bet * MAX_WIN_X)
             result = {"grid": grid, "mults": mults, "wins": wins, "base_payout": base, "bonus": bonus}
             tag = " +bonus" if bonus else ""
+        elif cfg.get("hold"):                                         # Hold & Win («Монетный удар»)
+            best = None
+            for _ in range(tries):                                    # режим удачи: лучший из нескольких запусков
+                sp = coin_spin(cfg)
+                score = sp[2] / n_lines + (sp[3]["total"] if sp[3] else 0)
+                if best is None or score > best[0]:
+                    best = (score, sp)
+            grid, wins, total, hold = best[1]
+            base = bet * total // n_lines
+            hold_pay = min(bet * hold["total"], bet * MAX_WIN_X) if hold else 0
+            if hold:
+                hold["pay"] = hold_pay
+            payout = min(base + hold_pay, bet * MAX_WIN_X)
+            result = {"grid": grid, "wins": wins, "base_payout": base, "hold": hold}
+            tag = " +hold" if hold else ""
         else:
             best = None
             for _ in range(tries):                                    # режим удачи: берём лучший из нескольких бросков
