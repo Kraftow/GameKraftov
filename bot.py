@@ -67,14 +67,31 @@ TTT_BLOCK_CHANCE = 75        # % — как часто бот замечает �
 SHELL_MULT = (27, 10)        # выплата при угадывании: ставка x2.7 (шанс 1 из 3)
 POPUP_TTL = 3 * 24 * 3600    # сколько дней непросмотренное окно ждёт игрока
 
-# (название, эмодзи, вес). Сумма весов = 140, поэтому шансы нормируются:
-# Фартануло ≈21.4%, Туз ≈42.9%, 100$ ≈10.7%, Не повезло 25%
-PRIZES = [
-    ("Фартануло", "🍀", 30, "/static/clover.svg"),
-    ("Порванный туз червовый", "🃏", 60, "/static/ace.svg"),
-    ("Сто долларов", "💵", 15, "/static/money.svg"),
-    ("Повезёт в другой раз", "😢", 35, "/static/sad.svg"),
+# ---- Колесо фортуны ----
+# Сегменты идут по часовой стрелке от верха. «Ничего» стоит дважды, на противоположных сторонах (0 и 3).
+# weight — относительный шанс выпадения: меняйте веса, чтобы регулировать щедрость колеса.
+WHEEL_FS_BET = 10            # ставка одного фриспина с колеса (в монетах)
+FREE_MAX_WIN = 50_000        # потолок выплаты за ОДИН бесплатный спин / фрибет (в монетах)
+WHEEL_PRIZES = [
+    {"kind": "nothing",   "value": 0,    "name": "Ничего",        "emoji": "😢", "big": "",     "small": "НИЧЕГО",     "weight": 37, "color": "#23233a"},
+    {"kind": "freebet",   "value": 1000, "name": "Фрибет 1000",   "emoji": "🎟", "big": "1000", "small": "ФРИБЕТ",     "weight": 2,  "color": "#e0a81e", "dark": True},
+    {"kind": "freebet",   "value": 500,  "name": "Фрибет 500",    "emoji": "🎟", "big": "500",  "small": "ФРИБЕТ",     "weight": 6,  "color": "#b3122e"},
+    {"kind": "nothing",   "value": 0,    "name": "Ничего",        "emoji": "😢", "big": "",     "small": "НИЧЕГО",     "weight": 37, "color": "#23233a"},
+    {"kind": "freespins", "value": 50,   "name": "50 фриспинов",  "emoji": "💎", "big": "50",   "small": "ФРИСПИНОВ",  "weight": 3,  "color": "#6a3cff", "rare": True},
+    {"kind": "freespins", "value": 30,   "name": "30 фриспинов",  "emoji": "🎰", "big": "30",   "small": "ФРИСПИНОВ",  "weight": 15, "color": "#119a68"},
 ]
+WHEEL_EMOJI = {p["name"]: p["emoji"] for p in WHEEL_PRIZES}
+
+# ---- реферальная программа ----
+REF_MIN_USDT = 5                                   # минимальный депозит друга
+REF_BONUS_USDT = 50                                # бонус пригласившему
+REF_MIN_COINS = REF_MIN_USDT * COINS_PER_USDT
+REF_BONUS_COINS = REF_BONUS_USDT * COINS_PER_USDT
+
+# ---- промокоды ----
+PROMO_MIN_BET = 10                                 # минимальная ставка фриспина (подходит ко всем слотам)
+PROMO_RE = re.compile(r"^[A-Z0-9_-]{3,20}$")
+BOT_USERNAME = (os.environ.get("BOT_USERNAME") or "").lstrip("@")
 
 db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db_lock = threading.Lock()
@@ -98,6 +115,10 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS admin_wait(owner_id INTEGER PRIMARY KEY, wd_id INTEGER, card_msg_id INTEGER);
         CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS luck(scope TEXT PRIMARY KEY, level INTEGER NOT NULL, until REAL);
+        CREATE TABLE IF NOT EXISTS freespins(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, spins_left INTEGER NOT NULL, bet INTEGER NOT NULL, source TEXT, ts REAL);
+        CREATE TABLE IF NOT EXISTS promos(code TEXT PRIMARY KEY, coins INTEGER NOT NULL DEFAULT 0, spins INTEGER NOT NULL DEFAULT 0, bet INTEGER NOT NULL DEFAULT 0, max_uses INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, ts REAL);
+        CREATE TABLE IF NOT EXISTS promo_uses(code TEXT, user_id INTEGER, ts REAL, PRIMARY KEY(code, user_id));
+        CREATE TABLE IF NOT EXISTS referrals(user_id INTEGER PRIMARY KEY, referrer_id INTEGER NOT NULL, ts REAL, rewarded INTEGER NOT NULL DEFAULT 0, reward_ts REAL);
         """
     )
     db.commit()
@@ -107,6 +128,17 @@ async def tg(method: str, **data):
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(f"{API}/{method}", json=data)
         return r.json()
+
+
+async def ensure_bot_username() -> str:
+    """Имя бота нужно для реферальных ссылок (t.me/<бот>?start=ref_ID)."""
+    global BOT_USERNAME
+    if not BOT_USERNAME:
+        try:
+            BOT_USERNAME = ((await tg("getMe")).get("result") or {}).get("username") or ""
+        except Exception:
+            pass
+    return BOT_USERNAME
 
 
 @asynccontextmanager
@@ -125,6 +157,7 @@ async def lifespan(app: FastAPI):
         await tg("sendMessage", chat_id=OWNER_ID,
                  text="⚠️ База данных лежит НЕ на постоянном диске — балансы и заявки сотрутся при перезапуске.\n"
                       "Подключите в Railway Volume с путём /data и перезапустите сервис.")
+    await ensure_bot_username()
     yield
 
 
@@ -251,6 +284,28 @@ async def index():
     return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"))
 
 
+# ---------- фриспины и фрибеты ----------
+def packs_nolock(uid: int) -> list:
+    """Бесплатные вращения игрока. Вызывать под db_lock."""
+    rows = db.execute(
+        "SELECT id, kind, spins_left, bet FROM freespins WHERE user_id=? AND spins_left>0 ORDER BY kind DESC, bet, id",
+        (uid,),
+    ).fetchall()
+    return [{"id": a, "kind": k, "left": n, "bet": b} for a, k, n, b in rows]
+
+
+def grant_pack(uid: int, kind: str, n: int, bet: int, source: str):
+    """kind: 'freespins' | 'freebet'. Одинаковые наборы складываются. Вызывать под db_lock."""
+    cur = db.execute(
+        "UPDATE freespins SET spins_left=spins_left+? WHERE user_id=? AND kind=? AND bet=? AND spins_left>0",
+        (n, uid, kind, bet),
+    )
+    if cur.rowcount == 0:
+        db.execute("INSERT INTO freespins(user_id, kind, spins_left, bet, source, ts) VALUES(?,?,?,?,?,?)",
+                   (uid, kind, n, bet, source, time.time()))
+    db.commit()
+
+
 @app.post("/api/status")
 async def status(req: Request):
     user = check_init_data((await req.json())["initData"])
@@ -258,12 +313,15 @@ async def status(req: Request):
     with db_lock:
         bal = get_balance(user["id"])
         adm = is_admin(user["id"])
+        packs = packs_nolock(user["id"])
     return {
         "balance": bal,
         "is_admin": adm,
         "is_owner": user["id"] == OWNER_ID,
         "left": seconds_left(user["id"]),
-        "prizes": [{"name": n, "emoji": e, "img": i} for n, e, _, i in PRIZES],
+        "packs": packs,
+        "prizes": [{k: p.get(k) for k in ("kind", "name", "emoji", "big", "small", "color", "dark", "rare")}
+                   for p in WHEEL_PRIZES],
     }
 
 
@@ -274,7 +332,7 @@ async def history(req: Request):
         rows = db.execute(
             "SELECT prize, ts FROM spins WHERE user_id=? ORDER BY ts DESC LIMIT 50", (user["id"],)
         ).fetchall()
-    return {"items": [{"prize": p, "ts": t} for p, t in rows]}
+    return {"items": [{"prize": p, "ts": t, "emoji": WHEEL_EMOJI.get(p, "🎁")} for p, t in rows]}
 
 
 @app.post("/api/spin")
@@ -282,15 +340,29 @@ async def spin(req: Request):
     user = check_init_data((await req.json())["initData"])
     uid = user["id"]
     with db_lock:  # защита от двойного нажатия
+        if is_banned(uid):
+            return BANNED_RESP()
         left = seconds_left_nolock(uid)
         if left > 0:
             return JSONResponse({"error": "cooldown", "left": left}, status_code=429)
-        idx = random.choices(range(len(PRIZES)), weights=[p[2] for p in PRIZES])[0]
-        db.execute("INSERT INTO spins VALUES(?,?,?)", (uid, time.time(), PRIZES[idx][0]))
+        idx = random.SystemRandom().choices(range(len(WHEEL_PRIZES)), weights=[p["weight"] for p in WHEEL_PRIZES])[0]
+        p = WHEEL_PRIZES[idx]
+        db.execute("INSERT INTO spins VALUES(?,?,?)", (uid, time.time(), p["name"]))
+        if p["kind"] == "freebet":
+            grant_pack(uid, "freebet", 1, p["value"], "wheel")
+        elif p["kind"] == "freespins":
+            grant_pack(uid, "freespins", p["value"], WHEEL_FS_BET, "wheel")
         db.commit()
-    name = PRIZES[idx][0]
-    await tg("sendMessage", chat_id=uid, text=f"🎉 Вы выиграли: {name}")
-    return {"index": idx, "name": name, "left": 0 if uid == OWNER_ID else COOLDOWN}
+        packs = packs_nolock(uid)
+    if p["kind"] == "freebet":
+        text = f"🎟 Фрибет {p['value']} {CURRENCY}! Используйте его в слотах — выигрыш ваш"
+    elif p["kind"] == "freespins":
+        text = f"{p['emoji']} {p['value']} фриспинов по {WHEEL_FS_BET} {CURRENCY}! Крутите их в слотах"
+    else:
+        text = "😢 В этот раз ничего — повезёт в другой раз"
+    await tg("sendMessage", chat_id=uid, text=f"🎡 Колесо фортуны: {text}" if p["kind"] != "nothing" else f"🎡 {text}")
+    return {"index": idx, "name": p["name"], "kind": p["kind"], "text": text, "packs": packs,
+            "left": 0 if uid == OWNER_ID else COOLDOWN}
 
 
 seconds_left_nolock = _cd_nolock
@@ -996,19 +1068,39 @@ async def slot_spin_api(req: Request):
     uid = user["id"]
     key = body.get("slot")
     cfg = SLOTS.get(key)
-    try:
-        bet = int(body.get("bet"))
-    except (TypeError, ValueError):
-        return JSONResponse({"error": "bad_bet"}, status_code=400)
-    if cfg is None or bet < len(cfg["lines"]) or bet > MAX_BET:   # минимум 1 монета на линию
+    if cfg is None:
         return JSONResponse({"error": "bad_bet"}, status_code=400)
     n_lines = len(cfg["lines"])
+    pack_id = body.get("pack_id")
+    free = pack_id is not None                       # бесплатное вращение: фриспин или фрибет
+    bet = 0
+    if free:
+        try:
+            pack_id = int(pack_id)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "no_pack"}, status_code=400)
+    else:
+        try:
+            bet = int(body.get("bet"))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "bad_bet"}, status_code=400)
+        if bet < n_lines or bet > MAX_BET:           # минимум 1 монета на линию
+            return JSONResponse({"error": "bad_bet"}, status_code=400)
     with db_lock:  # атомарно: проверка баланса + списание/начисление
         if is_banned(uid):
             return BANNED_RESP()
-        bal = get_balance(uid)
-        if bet > bal:
-            return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
+        if free:
+            pk = db.execute("SELECT bet, kind FROM freespins WHERE id=? AND user_id=? AND spins_left>0",
+                            (pack_id, uid)).fetchone()
+            if not pk:
+                return JSONResponse({"error": "no_pack", "packs": packs_nolock(uid)}, status_code=409)
+            bet = pk[0]
+            if bet < n_lines:
+                return JSONResponse({"error": "pack_bet_low", "need": n_lines}, status_code=400)
+        else:
+            bal = get_balance(uid)
+            if bet > bal:
+                return JSONResponse({"error": "no_money", "balance": bal}, status_code=400)
         tries = luck_tries(uid)
         if cfg.get("bonus"):
             grid, mults, wins, total = dogs_pick(cfg, tries)          # результат выбирает только сервер
@@ -1024,18 +1116,33 @@ async def slot_spin_api(req: Request):
                 bonus_pay = min(bonus_pay, bet * MAX_WIN_X)
                 bonus = {"spins": spins, "total": bonus_pay}
             payout = min(base + (bonus["total"] if bonus else 0), bet * MAX_WIN_X)
-            bal = add_balance(uid, payout - bet, f"slot {key} {'win' if payout else 'lose'}" + (" +bonus" if bonus else ""))
-            return {"grid": grid, "mults": mults, "wins": wins, "base_payout": base, "bonus": bonus,
-                    "payout": payout, "bet": bet, "balance": bal}
-        best = None
-        for _ in range(tries):                                        # режим удачи: берём лучший из нескольких бросков
-            sp = slot_spin(cfg)
-            if best is None or sp[2] > best[2]:
-                best = sp
-        grid, wins, total = best
-        payout = bet * total // n_lines
-        bal = add_balance(uid, payout - bet, f"slot {key} {'win' if payout else 'lose'}")
-    return {"grid": grid, "wins": wins, "payout": payout, "bet": bet, "balance": bal}
+            result = {"grid": grid, "mults": mults, "wins": wins, "base_payout": base, "bonus": bonus}
+            tag = " +bonus" if bonus else ""
+        else:
+            best = None
+            for _ in range(tries):                                    # режим удачи: берём лучший из нескольких бросков
+                sp = slot_spin(cfg)
+                if best is None or sp[2] > best[2]:
+                    best = sp
+            grid, wins, total = best
+            payout = bet * total // n_lines
+            result = {"grid": grid, "wins": wins}
+            tag = ""
+        if free:
+            payout = min(payout, FREE_MAX_WIN)                        # потолок выигрыша с бесплатного вращения
+            db.execute("UPDATE freespins SET spins_left=spins_left-1 WHERE id=?", (pack_id,))
+            db.execute("DELETE FROM freespins WHERE spins_left<=0")
+            delta, kind_tag = payout, "free "
+        else:
+            delta, kind_tag = payout - bet, ""
+        reason = f"{kind_tag}slot {key} {'win' if payout else 'lose'}{tag}"
+        if delta:
+            bal = add_balance(uid, delta, reason)
+        else:
+            db.commit()
+            bal = get_balance(uid)
+        result.update({"payout": payout, "bet": bet, "balance": bal, "free": free, "packs": packs_nolock(uid)})
+    return result
 
 
 # ---------- Пополнение счёта ----------
@@ -1113,6 +1220,14 @@ async def admin_deposit_ok(req: Request):
             return JSONResponse({"error": "Заявка не найдена или уже обработана"}, status_code=404)
         db.execute("UPDATE deposits SET status=? WHERE id=?", ("done" if approve else "rejected", dep_id))
         new_bal = add_balance(row[0], row[1], f"deposit #{dep_id}") if approve else None
+        ref_note = None
+        if approve and row[1] >= REF_MIN_COINS:            # первый депозит друга от 5 USDT -> бонус пригласившему
+            ref = db.execute("SELECT referrer_id FROM referrals WHERE user_id=? AND rewarded=0", (row[0],)).fetchone()
+            if ref:
+                db.execute("UPDATE referrals SET rewarded=1, reward_ts=? WHERE user_id=?", (time.time(), row[0]))
+                ref_bal = add_balance(ref[0], REF_BONUS_COINS, f"referral bonus (friend {row[0]})")
+                fr = db.execute("SELECT first_name FROM users WHERE user_id=?", (row[0],)).fetchone()
+                ref_note = (ref[0], (fr[0] if fr and fr[0] else "ваш друг"), ref_bal)
         db.commit()
     if approve:
         await tg("sendMessage", chat_id=row[0],
@@ -1120,6 +1235,10 @@ async def admin_deposit_ok(req: Request):
     else:
         await tg("sendMessage", chat_id=row[0],
                  text=f"❌ Заявка на пополнение #{dep_id} отклонена. Если вы оплатили — напишите нам через «Обратная связь».")
+    if ref_note:
+        await tg("sendMessage", chat_id=ref_note[0],
+                 text=f"🎉 {ref_note[1]} пополнил счёт — вам начислен бонус {REF_BONUS_USDT} USDT "
+                      f"(+{REF_BONUS_COINS} {CURRENCY})!\nБаланс: {ref_note[2]} {CURRENCY}")
     return {"ok": True, "approved": approve}
 
 
@@ -1431,6 +1550,158 @@ async def admin_popup(req: Request):
     return {"ok": True, "name": name}
 
 
+# ---------- Промокоды ----------
+_promo_fails: dict = {}
+
+
+def _promo_blocked(uid: int) -> bool:
+    now = time.time()
+    lst = [t for t in _promo_fails.get(uid, []) if now - t < 600]
+    _promo_fails[uid] = lst
+    return len(lst) >= 6          # защита от подбора кодов: 6 неудач за 10 минут
+
+
+def _promo_fail(uid: int, msg: str, status: int = 404):
+    _promo_fails.setdefault(uid, []).append(time.time())
+    return JSONResponse({"error": msg}, status_code=status)
+
+
+@app.post("/api/promo/redeem")
+async def promo_redeem(req: Request):
+    body, user = await body_user(req)
+    uid = user["id"]
+    code = str(body.get("code", "")).strip().upper()
+    if _promo_blocked(uid):
+        return JSONResponse({"error": "Слишком много неверных попыток. Попробуйте через 10 минут"}, status_code=429)
+    if not PROMO_RE.match(code):
+        return _promo_fail(uid, "Неверный промокод", 400)
+    with db_lock:
+        if is_banned(uid):
+            return BANNED_RESP()
+        row = db.execute("SELECT coins, spins, bet, max_uses, used, active FROM promos WHERE code=?", (code,)).fetchone()
+        if not row or not row[5]:
+            return _promo_fail(uid, "Промокод не найден или отключён")
+        coins, spins, bet, max_uses, used, _ = row
+        if used >= max_uses:
+            return JSONResponse({"error": "Промокод уже активировали максимальное число раз"}, status_code=410)
+        if db.execute("SELECT 1 FROM promo_uses WHERE code=? AND user_id=?", (code, uid)).fetchone():
+            return JSONResponse({"error": "Вы уже активировали этот промокод"}, status_code=409)
+        db.execute("INSERT INTO promo_uses VALUES(?,?,?)", (code, uid, time.time()))
+        db.execute("UPDATE promos SET used=used+1 WHERE code=?", (code,))
+        if spins:
+            grant_pack(uid, "freespins", spins, bet, f"promo {code}")
+        bal = add_balance(uid, coins, f"promo {code}") if coins else get_balance(uid)
+        db.commit()
+        packs = packs_nolock(uid)
+    return {"ok": True, "coins": coins, "spins": spins, "bet": bet, "balance": bal, "packs": packs}
+
+
+def _promo_rows():
+    rows = db.execute("SELECT code, coins, spins, bet, max_uses, used, active, ts FROM promos ORDER BY ts DESC LIMIT 50").fetchall()
+    return [{"code": a, "coins": b, "spins": c, "bet": d, "max_uses": e, "used": f, "active": bool(g), "ts": h}
+            for a, b, c, d, e, f, g, h in rows]
+
+
+@app.post("/api/admin/promo/list")
+async def admin_promo_list(req: Request):
+    await body_admin(req)
+    with db_lock:
+        return {"items": _promo_rows()}
+
+
+@app.post("/api/admin/promo/create")
+async def admin_promo_create(req: Request):
+    body, user = await body_admin(req)
+
+    def num(k):
+        try:
+            return int(body.get(k) or 0)
+        except (TypeError, ValueError):
+            return None
+    coins, spins, bet, uses = num("coins"), num("spins"), num("bet"), num("max_uses")
+    err = lambda m: JSONResponse({"error": m}, status_code=400)
+    if None in (coins, spins, bet, uses):
+        return err("Введите числа")
+    if not 0 <= coins <= MAX_BET:
+        return err("Монеты: от 0 до 1 000 000 000")
+    if not 0 <= spins <= 100_000:
+        return err("Фриспины: от 0 до 100 000")
+    if coins == 0 and spins == 0:
+        return err("Укажите монеты и/или фриспины")
+    if spins > 0 and not PROMO_MIN_BET <= bet <= 1_000_000:
+        return err(f"Ставка за спин: от {PROMO_MIN_BET} до 1 000 000 🪙")
+    if spins == 0:
+        bet = 0
+    if not 1 <= uses <= 1_000_000:
+        return err("Количество активаций: от 1 до 1 000 000")
+    code = str(body.get("code", "")).strip().upper()
+    if code and not PROMO_RE.match(code):
+        return err("Код: 3–20 символов, латиница, цифры, - и _")
+    with db_lock:
+        if code:
+            if db.execute("SELECT 1 FROM promos WHERE code=?", (code,)).fetchone():
+                return JSONResponse({"error": "Такой код уже существует"}, status_code=409)
+        else:
+            alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+            while True:
+                code = "".join(secrets.choice(alphabet) for _ in range(8))
+                if not db.execute("SELECT 1 FROM promos WHERE code=?", (code,)).fetchone():
+                    break
+        db.execute("INSERT INTO promos(code, coins, spins, bet, max_uses, used, active, created_by, ts) VALUES(?,?,?,?,?,0,1,?,?)",
+                   (code, coins, spins, bet, uses, user["id"], time.time()))
+        db.commit()
+        return {"ok": True, "code": code, "items": _promo_rows()}
+
+
+@app.post("/api/admin/promo/toggle")
+async def admin_promo_toggle(req: Request):
+    body, _ = await body_admin(req)
+    code = str(body.get("code", "")).strip().upper()
+    with db_lock:
+        cur = db.execute("UPDATE promos SET active=? WHERE code=?", (1 if body.get("active") else 0, code))
+        db.commit()
+        if cur.rowcount == 0:
+            return JSONResponse({"error": "Промокод не найден"}, status_code=404)
+        return {"ok": True, "items": _promo_rows()}
+
+
+# ---------- Реферальная программа ----------
+@app.post("/api/ref/info")
+async def ref_info(req: Request):
+    _, user = await body_user(req)
+    uid = user["id"]
+    bot = await ensure_bot_username()
+    with db_lock:
+        rows = db.execute(
+            "SELECT u.first_name, r.ts, r.rewarded FROM referrals r LEFT JOIN users u ON u.user_id=r.user_id "
+            "WHERE r.referrer_id=? ORDER BY r.ts DESC LIMIT 50", (uid,)).fetchall()
+        total = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (uid,)).fetchone()[0]
+        paid = db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=? AND rewarded=1", (uid,)).fetchone()[0]
+    return {
+        "link": f"https://t.me/{bot}?start=ref_{uid}" if bot else "",
+        "invited": total, "deposited": paid,
+        "earned_usdt": paid * REF_BONUS_USDT, "earned_coins": paid * REF_BONUS_COINS,
+        "bonus_usdt": REF_BONUS_USDT, "min_usdt": REF_MIN_USDT,
+        "friends": [{"name": n or "Игрок", "ts": t, "paid": bool(r)} for n, t, r in rows],
+    }
+
+
+async def register_referral(uid: int, ref_id: int, u: dict):
+    """Привязываем нового игрока к пригласившему (только для тех, кто впервые открыл бота)."""
+    if ref_id == uid:
+        return
+    with db_lock:
+        if not db.execute("SELECT 1 FROM users WHERE user_id=?", (ref_id,)).fetchone():
+            return
+        if db.execute("SELECT 1 FROM referrals WHERE user_id=?", (uid,)).fetchone():
+            return
+        db.execute("INSERT INTO referrals(user_id, referrer_id, ts) VALUES(?,?,?)", (uid, ref_id, time.time()))
+        db.commit()
+    await tg("sendMessage", chat_id=ref_id,
+             text=f"👥 По вашей ссылке пришёл новый игрок: {u.get('first_name') or 'друг'}.\n"
+                  f"Когда он пополнит счёт от {REF_MIN_USDT} USDT, вы получите {REF_BONUS_USDT} USDT.")
+
+
 # ---------- вебхук бота ----------
 @app.post("/webhook")
 async def webhook(req: Request, x_telegram_bot_api_secret_token: str = Header(None)):
@@ -1448,7 +1719,10 @@ async def handle_message(msg: dict):
     chat_id = msg["chat"]["id"]
     uid = msg["from"]["id"]
     text = msg.get("text", "")
+    was_known = True
     if msg["chat"].get("type") == "private":
+        with db_lock:
+            was_known = db.execute("SELECT 1 FROM users WHERE user_id=?", (uid,)).fetchone() is not None
         touch_user(msg["from"])
 
     # владелец вводит причину отклонения вывода (команда отменяет ожидание)
@@ -1479,10 +1753,14 @@ async def handle_message(msg: dict):
         return
 
     if text.startswith("/start"):
+        parts = text.split(maxsplit=1)
+        payload = parts[1].strip() if len(parts) > 1 else ""
+        if payload.startswith("ref_") and payload[4:].isdigit() and not was_known:
+            await register_referral(uid, int(payload[4:]), msg["from"])
         await tg(
             "sendMessage",
             chat_id=chat_id,
-            text="Привет! Жми «Открыть» и крути рулетку 🎰",
+            text="Добро пожаловать! 🎰 Жми «Открыть» — слоты, игры и колесо фортуны уже ждут",
             reply_markup={
                 "inline_keyboard": [[{"text": "🎰 Открыть", "web_app": {"url": BASE_URL}}]]
             },
