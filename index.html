@@ -409,6 +409,12 @@
       <button id="sl_spin">🎰 Крутить</button>
       <button id="sl_turbo" class="turbo">⚡ Турбо</button>
     </div>
+    <div class="btnrow">
+      <select id="sl_auto_n" style="width:100%;margin:0;padding:12px 8px;border-radius:14px;border:2px solid #ffffff44;background:#1a1a2e;color:#fff;font-size:16px;font-weight:700">
+        <option value="10">10</option><option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="500">500</option>
+      </select>
+      <button id="sl_auto" class="turbo">🔁 Автопрокрут</button>
+    </div>
     <div class="msg" id="slmsg"></div>
     <div style="opacity:.6;font-size:13px;text-align:center" id="sl_info"></div>
     <details class="paytab"><summary>📋 Таблица выплат</summary><div id="sl_pay"></div></details>
@@ -579,6 +585,7 @@
         <div class="info">Баланс: <b id="wd_bal">0</b> 🪙</div>
         <input id="wd_coins" type="number" inputmode="numeric" min="500" placeholder="Сколько монет вывести" style="text-align:center">
         <div class="info" id="wd_wager" style="display:none;color:#ffd76a;font-weight:700"></div>
+        <button id="wd_forfeit" style="display:none;margin-top:10px;border-color:#f8717166;background:#f871711a;font-size:15px;padding:12px">❌ Отказаться от бонуса</button>
         <div class="big-usdt" style="font-size:24px"><span id="wd_usdt">0.00</span> USDT</div>
         <div class="info" style="opacity:.7">1 USDT = <span class="rate">100</span> 🪙 · сеть TRC20</div>
         <input id="wd_wallet" placeholder="Ваш кошелёк USDT (TRC20)" style="font-size:14px;text-align:center" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -785,6 +792,7 @@ function showPage(n) {
   $("topbar").style.display = n===3 ? "none" : "flex";
   if (n===3) { loadStats(); loadLog(); loadDeposits(); }
   if (n===4) loadRef();
+  if (n !== 2 && autoOn) autoStop();
   window.scrollTo(0, 0);
   try { n === 1 ? tg.BackButton.hide() : tg.BackButton.show(); } catch (e) {}
 }
@@ -1068,6 +1076,7 @@ slots.forEach((s, i) => s.onclick = async () => {
 
 // ---------- Слоты ----------
 let SL = null, slKey = "fruit", slBusy = false, slCS = 70, slReels = [];
+let autoOn = false, autoLeft = 0, slOk = false;   // автопрокрут слотов
 const slTurbo = {};                                   // режим «Турбо» запоминается отдельно для каждого слота
 try { Object.assign(slTurbo, JSON.parse(localStorage.getItem("slTurbo") || "{}")); } catch (e) {}
 const rnd = a => a[Math.floor(Math.random() * a.length)];
@@ -1103,6 +1112,7 @@ async function slLoad() {
 
 function slSelect(k) {
   if (slBusy || !SL) return;
+  if (autoOn) autoStop("Автопрокрут остановлен");
   slKey = k; const c = SL[k];
   document.querySelectorAll(".slchip").forEach(x => x.classList.toggle("on", x.dataset.k === k));
   // размер ячейки подгоняем под ширину экрана
@@ -1173,7 +1183,8 @@ function slBonusIntro() {
   });
 }
 
-$("sl_spin").onclick = async () => {
+async function slSpin() {
+  slOk = false;
   if (slBusy || !SL) return;
   const pk = PACKS.find(p => p.id === fsSel), free = !!pk;
   const c = SL[slKey], key = slKey, bet = free ? pk.bet : parseInt($("slbet").value, 10), msg = $("slmsg"), win = $("sl_win");
@@ -1222,7 +1233,7 @@ $("sl_spin").onclick = async () => {
     msg.textContent = free ? (data.payout ? `🎁 Бесплатный бонус: +${data.payout.toLocaleString("ru-RU")} 🪙 на баланс` : "Бесплатный бонус без выигрыша")
       : data.payout > bet ? `Чистыми: +${(data.payout - bet).toLocaleString("ru-RU")} 🪙` : `Вернулось ${data.payout} из ${bet} 🪙`;
     tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(data.payout > (free ? 0 : bet) ? "success" : "warning");
-    slBusy = false; $("sl_spin").disabled = false; return;
+    slOk = true; slBusy = false; $("sl_spin").disabled = false; return;
   }
   setBal(data.balance);
   hitWins(data.wins);
@@ -1236,7 +1247,30 @@ $("sl_spin").onclick = async () => {
     win.textContent = free ? "Без выигрыша" : `−${bet} 🪙`; msg.textContent = pick(["Не повезло, крутим ещё? 😏", "Почти! 🎲", "Барабаны сегодня капризничают 🥱"]);
   }
   tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(data.payout > (free ? 0 : bet) ? "success" : data.payout ? "warning" : "error");
-  slBusy = false; $("sl_spin").disabled = false;
+  slOk = true; slBusy = false; $("sl_spin").disabled = false;
+}
+$("sl_spin").onclick = () => { if (!autoOn) slSpin(); };
+
+// ---------- Автопрокрут: крутит подряд выбранное число раз, пока хватает монет ----------
+function autoUI() {
+  const b = $("sl_auto"); b.classList.toggle("on", autoOn);
+  b.textContent = autoOn ? `⏹ Стоп (осталось ${autoLeft})` : "🔁 Автопрокрут";
+  $("sl_auto_n").disabled = autoOn; $("sl_spin").disabled = autoOn || slBusy;
+}
+function autoStop(note) { autoOn = false; autoLeft = 0; autoUI(); if (note) $("slmsg").textContent = note; }
+$("sl_auto").onclick = async () => {
+  if (autoOn) { autoOn = false; $("slmsg").textContent = "Автопрокрут остановится после этого вращения"; return; }
+  if (slBusy || !SL) return;
+  autoOn = true; autoLeft = parseInt($("sl_auto_n").value, 10) || 10; autoUI();
+  while (autoOn && autoLeft > 0) {
+    await slSpin();
+    if (!autoOn) break;                                // нажали «Стоп»
+    if (!slOk) { autoStop(); break; }                  // ошибка или не хватает монет — причина уже выведена
+    autoLeft--; autoUI();
+    if (autoLeft <= 0) { autoStop("Автопрокрут завершён ✅"); break; }
+    await new Promise(r => setTimeout(r, slTurbo[slKey] ? 350 : 800));
+  }
+  if (autoOn) autoStop(); else autoUI();
 };
 
 // ---------- Пополнение (Crypto Pay) ----------
@@ -1360,10 +1394,22 @@ function cashTab(n) {
 [1,2,3].forEach(i => $("ct"+i).onclick = () => cashTab(i));
 async function loadWager() {
   const { status, data } = await post("/api/wager"), b = $("wd_wager");
-  if (status !== 200 || !data.left) { b.style.display = "none"; return; }
-  b.style.display = "block";
+  if (status !== 200 || !data.left) { b.style.display = "none"; $("wd_forfeit").style.display = "none"; return; }
+  b.style.display = "block"; $("wd_forfeit").style.display = ""; window._forfeit = data.bonus || 0;
   b.textContent = `🎯 Бонус нужно отыграть (вейджер x${data.mult}): осталось поставить ${data.left.toLocaleString("ru-RU")} 🪙. Вывод станет доступен после этого`;
 }
+$("wd_forfeit").onclick = async () => {
+  const bn = window._forfeit || 0;
+  if (!await confirmTg(`Отказаться от бонуса? С баланса спишется ${bn.toLocaleString("ru-RU")} 🪙 бонусных монет, а вейджер обнулится. Остальные деньги можно будет вывести.`)) return;
+  $("wd_forfeit").disabled = true;
+  const { status, data } = await post("/api/wager/cancel");
+  $("wd_forfeit").disabled = false;
+  if (status === 200) {
+    setBal(data.balance); $("wd_bal").textContent = data.balance.toLocaleString("ru-RU");
+    $("wd_msg").textContent = data.removed ? `Бонус аннулирован: −${data.removed} 🪙. Теперь вывод доступен` : "Вейджер снят. Вывод доступен";
+    loadWager();
+  } else $("wd_msg").textContent = "❌ " + (data.error || "Ошибка, попробуйте позже");
+};
 const CH_ST = {
   deposit:  { pending: "⏳ Ждёт оплаты", expired: "⌛ Не оплачен", claimed: "⏳ Проверяется", done: "✅ Зачислено", rejected: "❌ Отклонено" },
   withdraw: { pending: "⏳ Ожидает", approved: "✅ Одобрено", rejected: "❌ Отклонено", frozen: "🧊 Заморожено" },

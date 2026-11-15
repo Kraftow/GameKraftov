@@ -131,10 +131,14 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS freespins(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, kind TEXT, spins_left INTEGER NOT NULL, bet INTEGER NOT NULL, source TEXT, ts REAL);
         CREATE TABLE IF NOT EXISTS promos(code TEXT PRIMARY KEY, coins INTEGER NOT NULL DEFAULT 0, spins INTEGER NOT NULL DEFAULT 0, bet INTEGER NOT NULL DEFAULT 0, max_uses INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, ts REAL);
         CREATE TABLE IF NOT EXISTS promo_uses(code TEXT, user_id INTEGER, ts REAL, PRIMARY KEY(code, user_id));
-        CREATE TABLE IF NOT EXISTS wager(user_id INTEGER PRIMARY KEY, left INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS wager(user_id INTEGER PRIMARY KEY, left INTEGER NOT NULL DEFAULT 0, bonus INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS referrals(user_id INTEGER PRIMARY KEY, referrer_id INTEGER NOT NULL, ts REAL, rewarded INTEGER NOT NULL DEFAULT 0, reward_ts REAL);
         """
     )
+    try:
+        db.execute("ALTER TABLE wager ADD COLUMN bonus INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     for _col in ("invoice_id INTEGER", "pay_url TEXT"):     # миграция: поля для счетов Crypto Pay
         try:
             db.execute(f"ALTER TABLE deposits ADD COLUMN {_col}")
@@ -246,8 +250,8 @@ def add_balance(uid: int, delta: int, reason: str) -> int:
     db.execute("UPDATE balances SET coins = coins + ? WHERE user_id=?", (delta, uid))
     db.execute("INSERT INTO tx VALUES(?,?,?,?)", (uid, time.time(), delta, reason))
     if delta > 0 and (reason.startswith(("referral bonus", "promo ", "free "))):   # бонусные начисления -> вейджер
-        db.execute("INSERT INTO wager(user_id, left) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET left=left+excluded.left",
-                   (uid, delta * WAGER_MULT))
+        db.execute("INSERT INTO wager(user_id, left, bonus) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
+                   "left=left+excluded.left, bonus=bonus+excluded.bonus", (uid, delta * WAGER_MULT, delta))
     db.commit()
     return get_balance(uid)
 
@@ -255,6 +259,7 @@ def add_balance(uid: int, delta: int, reason: str) -> int:
 def wager_play(uid: int, bet: int):
     """Реальная ставка (не фриспин) засчитывается в отыгрыш. Вызывать под db_lock."""
     db.execute("UPDATE wager SET left=MAX(0, left-?) WHERE user_id=? AND left>0", (bet, uid))
+    db.execute("UPDATE wager SET bonus=0 WHERE user_id=? AND left=0 AND bonus>0", (uid,))   # отыграли — бонус стал обычными деньгами
 
 
 def wager_left(uid: int) -> int:
@@ -1639,11 +1644,34 @@ async def withdraw_create(req: Request):
     return {"ok": True, "id": wd_id, "coins": coins, "usdt": usdt, "balance": new_bal}
 
 
+def _wager_bonus(uid: int) -> int:
+    """Сколько бонусных монет спишется при отказе (не больше текущего баланса). Вызывать под db_lock."""
+    row = db.execute("SELECT bonus FROM wager WHERE user_id=? AND left>0", (uid,)).fetchone()
+    return min(row[0], get_balance(uid)) if row else 0
+
+
 @app.post("/api/wager")
 async def wager_info(req: Request):
     _, user = await body_user(req)
     with db_lock:
-        return {"left": wager_left(user["id"]), "mult": WAGER_MULT}
+        return {"left": wager_left(user["id"]), "mult": WAGER_MULT, "bonus": _wager_bonus(user["id"])}
+
+
+@app.post("/api/wager/cancel")
+async def wager_cancel(req: Request):
+    """Отказ от бонуса: бонусные монеты списываются, вейджер обнуляется — после этого можно выводить остальное."""
+    _, user = await body_user(req)
+    uid = user["id"]
+    with db_lock:
+        if wager_left(uid) <= 0:
+            return JSONResponse({"error": "Активного бонуса нет"}, status_code=400)
+        removed = _wager_bonus(uid)
+        if removed:
+            add_balance(uid, -removed, "bonus forfeited")
+        db.execute("UPDATE wager SET left=0, bonus=0 WHERE user_id=?", (uid,))
+        db.commit()
+        bal = get_balance(uid)
+    return {"ok": True, "removed": removed, "balance": bal}
 
 
 @app.post("/api/cashier/history")
