@@ -205,7 +205,7 @@
 </div>
 
 <div id="p3" class="page">
-  <div class="nav sub" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div><div id="a4">✨ Окно</div></div>
+  <div class="nav sub g" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div><div id="a4">✨ Окно</div><div id="a5" style="display:none">🛡 Админы</div></div>
 
   <div id="ap1" style="width:100%;display:flex;flex-direction:column;align-items:center">
     <div class="card"><h2>📊 Статистика</h2><div id="stats">…</div><div class="top" id="top"></div></div>
@@ -260,6 +260,19 @@
       <div class="msg" id="pp_msg"></div>
       <div class="info">Игрок увидит окно сразу, если приложение открыто, или при следующем входе (в течение 3 дней).</div>
     </div>
+  </div>
+
+  <div id="ap5" style="width:100%;display:none;flex-direction:column;align-items:center">
+    <div class="card">
+      <h2>🛡 Администраторы</h2>
+      <input id="adm_target" placeholder="ID или @username (человек должен был открыть бота)">
+      <div class="btnrow">
+        <button id="adm_add">➕ Выдать доступ</button><button id="adm_del" class="pink">➖ Забрать</button>
+      </div>
+      <div class="msg" id="adm_msg"></div>
+      <div class="info" style="opacity:.7">Админ видит вкладку «Админ»: может выдавать монеты, банить, делать рассылки и всплывающие окна, зачислять депозиты. Заявки на вывод и управление админами остаются только у вас.</div>
+    </div>
+    <div class="card"><h2>👥 Текущие админы</h2><div id="adm_list">…</div></div>
   </div>
 </div>
 
@@ -357,6 +370,7 @@ async function init() {
   const { data } = await api("/api/status");
   prizes = data.prizes; left = data.left; setBal(data.balance || 0);
   if (data.is_admin) { isAdmin = true; $("n3").style.display = "block"; }
+  if (data.is_owner) $("a5").style.display = "block";
   await Promise.all(prizes.map(p => new Promise(r => { p.im = new Image(); p.im.onload = p.im.onerror = r; p.im.src = p.img; })));
   draw();
   left > 0 ? startTimer() : (btn.disabled = false);
@@ -502,13 +516,15 @@ async function bjLoad() { const { status, data } = await post("/api/bj/state"); 
 // ---------- админка ----------
 const fmtTime = ts => new Date(ts*1000).toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
 const confirmTg = text => new Promise(res => tg.showConfirm ? tg.showConfirm(text, res) : res(confirm(text)));
-[1,2,3,4].forEach(i => $("a"+i).onclick = () => {
-  [1,2,3,4].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
+[1,2,3,4,5].forEach(i => $("a"+i).onclick = () => {
+  [1,2,3,4,5].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
 });
 async function loadStats() {
   const { status, data } = await post("/api/admin/stats");
   if (status !== 200) return;
   $("stats").textContent = `Пользователей: ${data.users} (заблокировали бота: ${data.blocked}) · Монет в обороте: ${data.total.toLocaleString("ru-RU")}`;
+  $("stats").style.whiteSpace = "pre-line";
+  if (data.persistent === false) $("stats").textContent += "\n⚠️ База НЕ на постоянном диске — монеты сотрутся при перезапуске! Подключите Volume (/data) в Railway.";
   const top = $("top"); top.innerHTML = "";
   data.top.forEach(u => {
     const row = document.createElement("div");
@@ -815,6 +831,30 @@ $("wd_send").onclick = async () => {
     m.textContent = "❌ " + (data.error || "Ошибка, попробуйте позже");
   }
 };
+
+// ---------- админка: управление админами ----------
+async function loadAdmins() {
+  const { status, data } = await post("/api/admin/admins");
+  if (status !== 200) return;
+  const box = $("adm_list"); box.innerHTML = data.items.length ? "" : "Пока только вы";
+  data.items.forEach(u => {
+    const row = document.createElement("div"); row.className = "logrow";
+    const l = document.createElement("div"); l.textContent = (u.name || "—") + (u.username ? " @"+u.username : "");
+    const sm = document.createElement("small"); sm.textContent = "id " + u.id; l.appendChild(sm);
+    const x = document.createElement("button"); x.className = "mini pink"; x.textContent = "✖";
+    x.onclick = async () => { if (await confirmTg("Забрать доступ к админ-панели?")) admAct("/api/admin/admins/remove", String(u.id), "доступ отозван"); };
+    row.append(l, x); box.appendChild(row);
+  });
+}
+async function admAct(path, target, okText) {
+  if (!target) { $("adm_msg").textContent = "Укажи ID или @username"; return; }
+  const { status, data } = await post(path, { target });
+  $("adm_msg").textContent = status === 200 ? `✅ ${data.name}: ${okText}` : "❌ " + (data.error || "Ошибка");
+  if (status === 200) { $("adm_target").value = ""; loadAdmins(); }
+}
+$("adm_add").onclick = () => admAct("/api/admin/admins/add", $("adm_target").value.trim(), "доступ выдан");
+$("adm_del").onclick = async () => { const t = $("adm_target").value.trim(); if (t && await confirmTg("Забрать доступ к админ-панели?")) admAct("/api/admin/admins/remove", t, "доступ отозван"); };
+$("a5").addEventListener("click", loadAdmins);
 
 tttLoad();
 pollPopups();

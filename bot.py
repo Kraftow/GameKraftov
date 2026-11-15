@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 import html
 import hmac
 import json
@@ -35,6 +36,7 @@ if not BASE_URL:
     raise RuntimeError("Не задан адрес сайта: добавьте переменную BASE_URL (https://ваш-домен)")    # https://твой-домен
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "change-me-please")
 DB_PATH = os.environ.get("DB_PATH") or ("/data/bot.db" if os.path.isdir("/data") else "bot.db")  # /data = подключённый диск
+DB_PERSISTENT = bool(os.environ.get("DB_PATH")) or DB_PATH.startswith("/data/")  # False -> база сотрётся при перезапуске
 
 COOLDOWN = 12 * 60 * 60  # 12 часов
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -94,6 +96,7 @@ with db_lock:
         CREATE TABLE IF NOT EXISTS popup_seen(user_id INTEGER, popup_id INTEGER, PRIMARY KEY(user_id, popup_id));
         CREATE TABLE IF NOT EXISTS withdrawals(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, ts REAL, coins INTEGER, usdt TEXT, wallet TEXT, status TEXT, reason TEXT);
         CREATE TABLE IF NOT EXISTS admin_wait(owner_id INTEGER PRIMARY KEY, wd_id INTEGER, card_msg_id INTEGER);
+        CREATE TABLE IF NOT EXISTS admins(user_id INTEGER PRIMARY KEY);
         """
     )
     db.commit()
@@ -117,6 +120,10 @@ async def lifespan(app: FastAPI):
         "setChatMenuButton",
         menu_button={"type": "web_app", "text": "Открыть", "web_app": {"url": BASE_URL}},
     )
+    if not DB_PERSISTENT:
+        await tg("sendMessage", chat_id=OWNER_ID,
+                 text="⚠️ База данных лежит НЕ на постоянном диске — балансы и заявки сотрутся при перезапуске.\n"
+                      "Подключите в Railway Volume с путём /data и перезапустите сервис.")
     yield
 
 
@@ -198,6 +205,11 @@ def is_banned(uid: int) -> bool:
     return db.execute("SELECT 1 FROM banned WHERE user_id=?", (uid,)).fetchone() is not None
 
 
+def is_admin(uid: int) -> bool:
+    """Вызывать под db_lock."""
+    return uid == OWNER_ID or db.execute("SELECT 1 FROM admins WHERE user_id=?", (uid,)).fetchone() is not None
+
+
 BANNED_RESP = lambda: JSONResponse({"error": "banned"}, status_code=403)
 
 
@@ -209,7 +221,9 @@ async def body_user(req: Request):
 
 async def body_admin(req: Request):
     body, user = await body_user(req)
-    if user["id"] != OWNER_ID:  # проверка на сервере, а не в интерфейсе
+    with db_lock:
+        ok = is_admin(user["id"])
+    if not ok:  # проверка на сервере, а не в интерфейсе
         raise HTTPException(403, "admin only")
     return body, user
 
@@ -225,9 +239,11 @@ async def status(req: Request):
     touch_user(user)
     with db_lock:
         bal = get_balance(user["id"])
+        adm = is_admin(user["id"])
     return {
         "balance": bal,
-        "is_admin": user["id"] == OWNER_ID,
+        "is_admin": adm,
+        "is_owner": user["id"] == OWNER_ID,
         "left": seconds_left(user["id"]),
         "prizes": [{"name": n, "emoji": e, "img": i} for n, e, _, i in PRIZES],
     }
@@ -299,7 +315,7 @@ async def admin_stats(req: Request):
             "LEFT JOIN users u ON u.user_id=b.user_id WHERE b.coins<>0 ORDER BY b.coins DESC LIMIT 10"
         ).fetchall()
     return {
-        "users": users, "blocked": blocked, "total": total,
+        "users": users, "blocked": blocked, "total": total, "persistent": DB_PERSISTENT,
         "top": [{"id": i, "name": n or "", "username": un or "", "coins": c} for i, n, un, c in top],
     }
 
@@ -595,8 +611,8 @@ async def admin_ban(req: Request):
         row = resolve_target(body.get("target", ""))
         if not row:
             return JSONResponse({"error": "Пользователь не найден"}, status_code=404)
-        if row[0] == OWNER_ID:
-            return JSONResponse({"error": "Себя банить нельзя 🙂"}, status_code=400)
+        if is_admin(row[0]):
+            return JSONResponse({"error": "Админов банить нельзя 🙂"}, status_code=400)
         if ban:
             db.execute("INSERT OR IGNORE INTO banned VALUES(?)", (row[0],))
         else:
@@ -857,6 +873,68 @@ async def admin_deposit_ok(req: Request):
 
 
 
+
+# ---------- Управление админами (только владелец) ----------
+async def body_owner(req: Request):
+    body, user = await body_user(req)
+    if user["id"] != OWNER_ID:
+        raise HTTPException(403, "owner only")
+    return body, user
+
+
+@app.post("/api/admin/admins")
+async def admins_list(req: Request):
+    await body_owner(req)
+    with db_lock:
+        rows = db.execute("SELECT a.user_id, u.first_name, u.username FROM admins a "
+                          "LEFT JOIN users u ON u.user_id=a.user_id ORDER BY a.rowid").fetchall()
+    return {"items": [{"id": a, "name": b or "", "username": c or ""} for a, b, c in rows]}
+
+
+@app.post("/api/admin/admins/add")
+async def admins_add(req: Request):
+    body, _ = await body_owner(req)
+    with db_lock:
+        row = resolve_target(body.get("target", ""))
+        if not row:
+            return JSONResponse({"error": "Пользователь не найден (он должен хотя бы раз открыть бота)"}, status_code=404)
+        if row[0] == OWNER_ID:
+            return JSONResponse({"error": "Это вы 🙂 — вы и так главный админ"}, status_code=400)
+        db.execute("INSERT OR IGNORE INTO admins VALUES(?)", (row[0],))
+        db.commit()
+    await tg("sendMessage", chat_id=row[0],
+             text="🛠 Вам выдан доступ к админ-панели. Закройте мини-приложение и откройте заново — появится вкладка «Админ».")
+    return {"ok": True, "name": row[1] or str(row[0])}
+
+
+@app.post("/api/admin/admins/remove")
+async def admins_remove(req: Request):
+    body, _ = await body_owner(req)
+    with db_lock:
+        row = resolve_target(body.get("target", ""))
+        if not row:
+            return JSONResponse({"error": "Пользователь не найден"}, status_code=404)
+        db.execute("DELETE FROM admins WHERE user_id=?", (row[0],))
+        db.commit()
+    await tg("sendMessage", chat_id=row[0], text="Доступ к админ-панели отозван.")
+    return {"ok": True, "name": row[1] or str(row[0])}
+
+
+# ---------- Копия базы (команда /backup, только владелец) ----------
+async def send_backup(chat_id: int):
+    tmp = os.path.join(tempfile.gettempdir(), "bot-backup.db")
+    with db_lock:
+        dst = sqlite3.connect(tmp)
+        db.backup(dst)
+        dst.close()
+    with open(tmp, "rb") as f:
+        data = f.read()
+    async with httpx.AsyncClient(timeout=60) as c:
+        await c.post(f"{API}/sendDocument", data={"chat_id": chat_id, "caption": "💾 Копия базы (балансы, заявки, история)"},
+                     files={"document": ("bot-backup.db", data)})
+    os.remove(tmp)
+
+
 # ---------- Касса: вывод средств ----------
 WD_STATUS = {"pending": "⏳ Ожидает решения", "approved": "✅ Одобрено", "rejected": "❌ Отклонено", "frozen": "🧊 Заморожено"}
 
@@ -1096,6 +1174,10 @@ async def handle_message(msg: dict):
         if row:
             await tg("sendMessage", chat_id=row[0], text=f"💬 Ответ:\n{text}")
             return
+
+    if text == "/backup" and uid == OWNER_ID:
+        await send_backup(chat_id)
+        return
 
     if text.startswith("/start"):
         await tg(
