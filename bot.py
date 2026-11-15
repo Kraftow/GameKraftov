@@ -164,6 +164,11 @@ with db_lock:
         except sqlite3.OperationalError:
             pass
     db.execute("CREATE INDEX IF NOT EXISTS idx_dep_invoice ON deposits(invoice_id)")
+    for _col in ("reg_ip TEXT", "reg_city TEXT"):           # миграция: IP и город игрока на момент регистрации
+        try:
+            db.execute(f"ALTER TABLE profiles ADD COLUMN {_col}")
+        except sqlite3.OperationalError:
+            pass
     db.commit()
 
 
@@ -235,6 +240,61 @@ async def wager_sweeper():
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+# ---------- IP и город игрока ----------
+_ip_cache: dict = {}          # user_id -> последний IP, с которого игрок открывал приложение
+
+
+def client_ip(req: Request) -> str:
+    """Реальный IP клиента (за прокси Railway он приходит в заголовках)."""
+    h = req.headers
+    ip = (h.get("x-real-ip") or (h.get("x-forwarded-for") or "").split(",")[0] or (req.client.host if req.client else "")).strip()
+    return ip[:64]
+
+
+def note_ip(uid: int, req: Request):
+    ip = client_ip(req)
+    if ip:
+        _ip_cache[uid] = ip
+
+
+def _is_public_ip(ip: str) -> bool:
+    try:
+        import ipaddress
+        a = ipaddress.ip_address(ip)
+        return not (a.is_private or a.is_loopback or a.is_reserved or a.is_link_local or a.is_multicast)
+    except ValueError:
+        return False
+
+
+async def geo_city(ip: str) -> str:
+    """Город по IP (бесплатные сервисы, по очереди). Пустая строка, если определить не удалось."""
+    if not _is_public_ip(ip):
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=6) as c:
+            try:
+                d = (await c.get(f"https://ipwho.is/{ip}", params={"lang": "ru", "fields": "success,city,country"})).json()
+                if d.get("success"):
+                    return ", ".join(x for x in (d.get("city"), d.get("country")) if x)
+            except Exception as e:
+                print("geo ipwho.is:", repr(e))
+            d = (await c.get(f"http://ip-api.com/json/{ip}", params={"lang": "ru", "fields": "status,city,country"})).json()
+            if d.get("status") == "success":
+                return ", ".join(x for x in (d.get("city"), d.get("country")) if x)
+    except Exception as e:
+        print("geo ip-api:", repr(e))
+    return ""
+
+
+async def geo_fill(uid: int, ip: str):
+    """Фоном определяем город и дописываем его в профиль."""
+    city = await geo_city(ip)
+    if city:
+        with db_lock:
+            db.execute("UPDATE profiles SET reg_city=? WHERE user_id=?", (city, uid))
+            db.commit()
 
 
 # ---------- проверка initData от Telegram ----------
@@ -392,6 +452,7 @@ def reg_block(uid: int):
 async def body_user(req: Request):
     body = await req.json()
     user = check_init_data(body["initData"])
+    note_ip(user["id"], req)
     return body, user
 
 
@@ -434,6 +495,7 @@ def grant_pack(uid: int, kind: str, n: int, bet: int, source: str):
 @app.post("/api/status")
 async def status(req: Request):
     user = check_init_data((await req.json())["initData"])
+    note_ip(user["id"], req)
     touch_user(user)
     with db_lock:
         bal = get_balance(user["id"])
@@ -1783,7 +1845,7 @@ async def dbv_user(req: Request):
         card = {
             "id": uid,
             "user": u,
-            "profile": one("SELECT nickname, avatar, email, email_ok, phone, phone_ok, adult, reg_ts, created FROM profiles WHERE user_id=?", uid),
+            "profile": one("SELECT nickname, avatar, email, email_ok, phone, phone_ok, adult, reg_ts, created, reg_ip, reg_city FROM profiles WHERE user_id=?", uid),
             "balance": get_balance(uid),
             "wager": one("SELECT left, bonus, exp FROM wager WHERE user_id=?", uid),
             "daily": one("SELECT streak, last_day, claims FROM daily WHERE user_id=?", uid),
@@ -2376,7 +2438,13 @@ def reg_refresh(uid: int) -> dict:
     p = prof_get(uid)
     if reg_done(p) and not p["reg_ts"]:
         p["reg_ts"] = time.time()
-        db.execute("UPDATE profiles SET reg_ts=? WHERE user_id=?", (p["reg_ts"], uid))
+        ip = _ip_cache.get(uid)
+        db.execute("UPDATE profiles SET reg_ts=?, reg_ip=? WHERE user_id=?", (p["reg_ts"], ip, uid))   # IP пишем сразу
+        if ip:
+            try:
+                asyncio.get_running_loop().create_task(geo_fill(uid, ip))   # город определяем фоном
+            except RuntimeError:
+                pass
     db.commit()
     return p
 
