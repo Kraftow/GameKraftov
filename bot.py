@@ -1693,6 +1693,110 @@ async def body_owner(req: Request):
     return body, user
 
 
+
+# ---------- Просмотр базы данных (только владелец, только чтение) ----------
+DB_HIDDEN = {"email_codes"}          # хеши кодов из писем не показываем
+DB_PAGE = 20
+
+
+def _db_tables_nolock() -> list:
+    rows = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+    return [r[0] for r in rows if r[0] not in DB_HIDDEN]
+
+
+@app.post("/api/admin/db/tables")
+async def dbv_tables(req: Request):
+    await body_owner(req)
+    with db_lock:
+        out = []
+        for t in _db_tables_nolock():
+            n = db.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+            out.append({"name": t, "rows": n})
+    return {"tables": out, "path": DB_PATH}
+
+
+@app.post("/api/admin/db/rows")
+async def dbv_rows(req: Request):
+    body, _ = await body_owner(req)
+    table = str(body.get("table", ""))
+    q = str(body.get("q", "")).strip()[:100]
+    try:
+        page = max(0, int(body.get("page") or 0))
+    except (TypeError, ValueError):
+        page = 0
+    with db_lock:
+        if table not in _db_tables_nolock():
+            return JSONResponse({"error": "Нет такой таблицы"}, status_code=404)
+        cols = [r[1] for r in db.execute(f'PRAGMA table_info("{table}")').fetchall()]
+        where, args = "", []
+        if q:
+            where = " WHERE " + " OR ".join(f'CAST("{c}" AS TEXT) LIKE ?' for c in cols)
+            args = [f"%{q}%"] * len(cols)
+        total = db.execute(f'SELECT COUNT(*) FROM "{table}"{where}', args).fetchone()[0]
+        rows = db.execute(f'SELECT * FROM "{table}"{where} ORDER BY rowid DESC LIMIT ? OFFSET ?',
+                          args + [DB_PAGE, page * DB_PAGE]).fetchall()
+    return {"cols": cols, "rows": [list(r) for r in rows], "total": total, "page": page, "per_page": DB_PAGE}
+
+
+def _dbv_find_user_nolock(target: str):
+    t = target.strip()
+    if not t:
+        return None
+    if t.lstrip("-").isdigit() and len(t) < 14:
+        r = db.execute("SELECT user_id FROM users WHERE user_id=?", (int(t),)).fetchone()
+        if r:
+            return r[0]
+    like = t.lstrip("@").lower()
+    for sql, arg in (("SELECT user_id FROM users WHERE username=?", like),
+                     ("SELECT user_id FROM profiles WHERE nick_lc=?", like),
+                     ("SELECT user_id FROM profiles WHERE email=?", t.lower()),
+                     ("SELECT user_id FROM profiles WHERE phone=? OR phone=?", t)):
+        args = (arg, "+" + t.lstrip("+")) if "phone" in sql else (arg,)
+        r = db.execute(sql, args).fetchone()
+        if r:
+            return r[0]
+    r = db.execute("SELECT user_id FROM users WHERE first_name LIKE ? LIMIT 1", (f"%{t}%",)).fetchone()
+    return r[0] if r else None
+
+
+@app.post("/api/admin/db/user")
+async def dbv_user(req: Request):
+    body, _ = await body_owner(req)
+    with db_lock:
+        uid = _dbv_find_user_nolock(str(body.get("target", "")))
+        if uid is None:
+            return JSONResponse({"error": "Игрок не найден (ID, @username, ник, почта или телефон)"}, status_code=404)
+
+        def one(sql, *a):
+            r = db.execute(sql, a)
+            names = [d[0] for d in r.description]
+            row = r.fetchone()
+            return dict(zip(names, row)) if row else None
+
+        def many(sql, *a):
+            r = db.execute(sql, a)
+            names = [d[0] for d in r.description]
+            return [dict(zip(names, x)) for x in r.fetchall()]
+
+        u = one("SELECT * FROM users WHERE user_id=?", uid) or {"user_id": uid}
+        card = {
+            "id": uid,
+            "user": u,
+            "profile": one("SELECT nickname, avatar, email, email_ok, phone, phone_ok, adult, reg_ts, created FROM profiles WHERE user_id=?", uid),
+            "balance": get_balance(uid),
+            "wager": one("SELECT left, bonus, exp FROM wager WHERE user_id=?", uid),
+            "daily": one("SELECT streak, last_day, claims FROM daily WHERE user_id=?", uid),
+            "banned": is_banned(uid),
+            "referrer": one("SELECT referrer_id, ts, rewarded FROM referrals WHERE user_id=?", uid),
+            "invited": db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (uid,)).fetchone()[0],
+            "deposits": many("SELECT id, ts, amount, status FROM deposits WHERE user_id=? ORDER BY ts DESC LIMIT 20", uid),
+            "withdrawals": many("SELECT id, ts, coins, usdt, wallet, status, reason FROM withdrawals WHERE user_id=? ORDER BY ts DESC LIMIT 20", uid),
+            "tx": many("SELECT ts, delta, reason FROM tx WHERE user_id=? ORDER BY ts DESC LIMIT 40", uid),
+            "link": (f"https://t.me/{u['username']}" if u.get("username") else f"tg://user?id={uid}"),
+        }
+    return card
+
+
 # ---------- Регулятор удачи (только владелец) ----------
 def _luck_rows():
     rows = db.execute(

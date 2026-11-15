@@ -647,7 +647,7 @@
 </div>
 
 <div id="p3" class="page">
-  <div class="nav sub g" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div><div id="a4">✨ Окно</div><div id="a7">🎟 Промокоды</div><div id="a5" style="display:none">🛡 Админы</div><div id="a6" style="display:none">🍀 Удача</div></div>
+  <div class="nav sub g" style="margin-top:8px"><div id="a1" class="on">📊 Обзор</div><div id="a2">👤 Игрок</div><div id="a3">📣 Рассылка</div><div id="a4">✨ Окно</div><div id="a7">🎟 Промокоды</div><div id="a5" style="display:none">🛡 Админы</div><div id="a6" style="display:none">🍀 Удача</div><div id="a8" style="display:none">🗄 База</div></div>
 
   <div id="ap1" style="width:100%;display:flex;flex-direction:column;align-items:center">
     <div class="card"><h2>📊 Статистика</h2><div id="stats">…</div><div class="top" id="top"></div></div>
@@ -733,6 +733,29 @@
     <div class="card"><h2>📋 Промокоды</h2><div id="pr_list">…</div></div>
   </div>
 
+  <div id="ap8" style="width:100%;display:none;flex-direction:column;align-items:center">
+    <div class="card">
+      <h2>🔎 Карточка игрока</h2>
+      <input id="dbu_q" placeholder="ID, @username, ник, почта или телефон">
+      <button id="dbu_go" style="margin-top:12px">Найти</button>
+      <div class="msg" id="dbu_msg"></div>
+      <div id="dbu_card" style="font-size:13px;line-height:1.5;word-break:break-word"></div>
+    </div>
+    <div class="card">
+      <h2>🗄 Таблицы базы</h2>
+      <div class="info" style="opacity:.7;font-size:12px;margin-top:0">Только чтение. Видно только владельцу.</div>
+      <div id="dbt_list" style="margin-top:8px"></div>
+    </div>
+    <div class="card" id="dbt_view" style="display:none">
+      <h2 id="dbt_title"></h2>
+      <input id="dbt_q" placeholder="Поиск по таблице">
+      <div id="dbt_rows" style="margin-top:10px"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button id="dbt_prev" class="mini">← Назад</button><button id="dbt_next" class="mini">Вперёд →</button>
+      </div>
+      <div class="info" id="dbt_info" style="font-size:12px;opacity:.7"></div>
+    </div>
+  </div>
   <div id="ap6" style="width:100%;display:none;flex-direction:column;align-items:center">
     <div class="card">
       <h2>🍀 Регулятор удачи</h2>
@@ -947,7 +970,7 @@ async function init() {
   if (status !== 200) return;
   applyRate(data); prizes = data.prizes; left = data.left; setBal(data.balance || 0); setPacks(data.packs);
   if (data.is_admin) { isAdmin = true; $("n3").style.display = "block"; }
-  if (data.is_owner) { $("a5").style.display = "block"; $("a6").style.display = "block"; }
+  if (data.is_owner) { $("a5").style.display = "block"; $("a6").style.display = "block"; $("a8").style.display = "block"; }
   draw(); buildBulbs(); buildPrizeList(); startTimer();
 }
 
@@ -1127,8 +1150,8 @@ async function bjLoad() { const { status, data } = await post("/api/bj/state"); 
 // ---------- админка ----------
 const fmtTime = ts => new Date(ts*1000).toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
 const confirmTg = text => new Promise(res => tg.showConfirm ? tg.showConfirm(text, res) : res(confirm(text)));
-[1,2,3,4,5,6,7].forEach(i => $("a"+i).onclick = () => {
-  [1,2,3,4,5,6,7].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
+[1,2,3,4,5,6,7,8].forEach(i => $("a"+i).onclick = () => {
+  [1,2,3,4,5,6,7,8].forEach(j => { $("a"+j).classList.toggle("on", j===i); $("ap"+j).style.display = j===i ? "flex" : "none"; });
 });
 async function loadStats() {
   const { status, data } = await post("/api/admin/stats");
@@ -1788,6 +1811,73 @@ $("lk_apply").onclick = async () => {
   if (status === 200) lkList(data.items);
 };
 $("a6").addEventListener("click", loadLuck);
+
+
+// ---------- админка: просмотр базы (только владелец) ----------
+const TS_COLS = new Set(["ts", "reg_ts", "created", "last_seen", "until", "exp"]);
+const dbEsc = v => String(v).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const dbVal = (c, v) => v === null || v === undefined ? "—" : (TS_COLS.has(c) && typeof v === "number" && v > 1e9 ? fmtTime(v) : String(v));
+function dbKV(obj) {
+  return Object.entries(obj || {}).map(([k, v]) => `<div><span style="opacity:.6">${dbEsc(k)}:</span> ${dbEsc(dbVal(k, v))}</div>`).join("");
+}
+function dbList(title, rows) {
+  if (!rows || !rows.length) return "";
+  return `<div style="margin-top:10px"><b>${title}</b>` + rows.map(r =>
+    `<div style="border-top:1px solid #ffffff14;padding:4px 0">${Object.entries(r).map(([k, v]) => `${dbEsc(k)}: ${dbEsc(dbVal(k, v))}`).join(" · ")}</div>`).join("") + "</div>";
+}
+async function dbFindUser() {
+  const q = $("dbu_q").value.trim(); if (!q) return;
+  $("dbu_msg").textContent = "…"; $("dbu_card").innerHTML = "";
+  const { status, data } = await post("/api/admin/db/user", { target: q });
+  if (status !== 200) { $("dbu_msg").textContent = "❌ " + (data.error || "Ошибка"); return; }
+  $("dbu_msg").textContent = "";
+  const p = data.profile || {};
+  $("dbu_card").innerHTML =
+    `<div style="font-size:15px"><b>${dbEsc(p.nickname || data.user.first_name || "Без имени")}</b> · ID ${data.id}${data.banned ? " · 🚫 бан" : ""}</div>` +
+    `<div><a id="dbu_link" href="#" style="color:#7ff3ea">Открыть в Telegram</a></div>` +
+    `<div style="margin-top:8px"><b>Баланс:</b> ${nf(data.balance)} 🪙 · приглашено: ${data.invited}</div>` +
+    `<div style="margin-top:8px"><b>Telegram</b>${dbKV(data.user)}</div>` +
+    `<div style="margin-top:8px"><b>Профиль</b>${dbKV(data.profile)}</div>` +
+    (data.wager ? `<div style="margin-top:8px"><b>Вейджер</b>${dbKV(data.wager)}</div>` : "") +
+    (data.daily ? `<div style="margin-top:8px"><b>Ежедневные</b>${dbKV(data.daily)}</div>` : "") +
+    (data.referrer ? `<div style="margin-top:8px"><b>Пригласил</b>${dbKV(data.referrer)}</div>` : "") +
+    dbList("Пополнения", data.deposits) + dbList("Выводы", data.withdrawals) + dbList("Последние операции", data.tx);
+  $("dbu_link").onclick = e => {
+    e.preventDefault();
+    try { data.link.startsWith("https://t.me/") ? tg.openTelegramLink(data.link) : tg.openLink(data.link); } catch (err) { window.open(data.link); }
+  };
+}
+$("dbu_go").onclick = dbFindUser;
+$("dbu_q").addEventListener("keydown", e => { if (e.key === "Enter") dbFindUser(); });
+
+let dbTable = "", dbPage = 0, dbTimer = null;
+async function loadDbTables() {
+  const { status, data } = await post("/api/admin/db/tables"); if (status !== 200) return;
+  const box = $("dbt_list"); box.replaceChildren();
+  data.tables.forEach(t => {
+    const row = document.createElement("div"); row.className = "logrow"; row.style.cursor = "pointer";
+    row.innerHTML = `<div>${dbEsc(t.name)}</div><div style="opacity:.7">${nf(t.rows)}</div>`;
+    row.onclick = () => { dbTable = t.name; dbPage = 0; $("dbt_q").value = ""; loadDbRows(); };
+    box.appendChild(row);
+  });
+}
+async function loadDbRows() {
+  const { status, data } = await post("/api/admin/db/rows", { table: dbTable, page: dbPage, q: $("dbt_q").value.trim() });
+  if (status !== 200) return;
+  $("dbt_view").style.display = "block"; $("dbt_title").textContent = "🗄 " + dbTable;
+  $("dbt_rows").innerHTML = data.rows.length ? data.rows.map(r =>
+    `<div style="border:1px solid #ffffff1a;border-radius:10px;padding:8px;margin-bottom:8px;font-size:12px;line-height:1.45;word-break:break-word">` +
+    data.cols.map((c, i) => `<div><span style="opacity:.6">${dbEsc(c)}:</span> ${dbEsc(dbVal(c, r[i]))}</div>`).join("") + `</div>`).join("")
+    : "<div style='opacity:.6'>Пусто</div>";
+  const pages = Math.max(1, Math.ceil(data.total / data.per_page));
+  $("dbt_info").textContent = `Найдено: ${nf(data.total)} · страница ${data.page + 1} из ${pages}`;
+  $("dbt_prev").disabled = data.page <= 0; $("dbt_next").disabled = data.page + 1 >= pages;
+  $("dbt_view").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("dbt_prev").onclick = () => { if (dbPage > 0) { dbPage--; loadDbRows(); } };
+$("dbt_next").onclick = () => { dbPage++; loadDbRows(); };
+$("dbt_q").addEventListener("input", () => { clearTimeout(dbTimer); dbTimer = setTimeout(() => { dbPage = 0; if (dbTable) loadDbRows(); }, 400); });
+$("a8").addEventListener("click", loadDbTables);
 
 // ---------- бесплатные вращения (фриспины / фрибеты) ----------
 let fsSel = null;
